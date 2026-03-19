@@ -395,8 +395,6 @@ def fetch_bloomberg():
 def fetch_wsj():
     return from_rss("https://feeds.a.dj.com/rss/RSSWorldNews.xml", "WSJ", "🗞️")
 
-def fetch_ft():
-    return from_rss("https://www.ft.com/rss/home", "FT", "🏦")
 
 # ─── Claude AI 处理 ────────────────────────────────────────────────────────────
 
@@ -604,7 +602,6 @@ FETCHERS = [
     ("华尔街见闻",   fetch_wallstreetcn),
     ("Bloomberg",    fetch_bloomberg),
     ("WSJ",          fetch_wsj),
-    ("FT",           fetch_ft),
 ]
 
 # ─── 主流程 ────────────────────────────────────────────────────────────────────
