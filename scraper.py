@@ -1,46 +1,39 @@
 """
-新闻抓取 + 飞书推送 v4
-
-来源：BBC中文、路透中文、晚点LatePost、机器之心、爱意若、
-      TechCrunch、Wired、The Verge、MIT科技评论、
-      钛媒体、36Kr、虎嗅、华尔街见闻、Bloomberg、WSJ、FT
+新闻抓取 + 飞书推送 v5
 
 核心逻辑：
-1. 抓取各来源文章列表（标题 + URL）
-2. 用 Jina Reader (r.jina.ai) 获取文章正文（支持 JS 渲染的 SPA）
-   - RSS 中已有 content:encoded 全文的来源直接用，跳过 Jina
-   - Jina 失败时降级为 requests + BeautifulSoup
-3. Claude API 批量处理：
-   - 只保留科技 / 资本市场 / 地缘政治相关内容
-   - 过滤广告和赞助内容
-   - 标题精简为 ≤10 个中文字
-   - 基于真实正文生成 3 句话摘要（不靠标题推测）
-   - 重要性评分：AI/芯片=3，其他科技=2，金融/地缘=1
-4. 每来源按重要性排序，最多推送 5 条
-5. 推送飞书富文本卡片
+1. 每天早上 8 点（北京时间）推送一次
+2. 只抓过去 24 小时内发布的文章
+3. 晚点、爱意若首页列表也用 Jina Reader 抓（解决 SPA 问题）
+4. RSS 有 content:encoded 全文的来源直接用，其余用 Jina 补全正文
+5. Claude API 批量处理：过滤主题+广告、精简标题、3句摘要、重要性评分
+6. 全局按重要性排序，每来源最多 5 条，总共推送 top 20
 """
 
 import os
+import re
 import json
 import hashlib
 import time
 import feedparser
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from bs4 import BeautifulSoup
 
 # ─── 配置 ──────────────────────────────────────────────────────────────────────
 
-FEISHU_WEBHOOK     = os.environ.get("FEISHU_WEBHOOK", "")
-ANTHROPIC_API_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+FEISHU_WEBHOOK    = os.environ.get("FEISHU_WEBHOOK", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-SEEN_FILE          = "seen_ids.json"
-MAX_PER_SOURCE     = 5       # 每个来源最终推送上限
-FETCH_LIMIT        = 10      # 每来源最多抓取多少条供 Claude 筛选
-CLAUDE_BATCH       = 15      # Claude 每批处理条数
-MAX_CONTENT_CHARS  = 3000    # 传给 Claude 的正文最大字符数
-JINA_TIMEOUT       = 25      # Jina Reader 超时秒数
-HTTP_TIMEOUT       = 12      # 普通 HTTP 请求超时
+MAX_TOTAL         = 20      # 最终推送总条数上限
+MAX_PER_SOURCE    = 5       # 单个来源最多推送条数
+FETCH_LIMIT       = 10      # 每来源最多抓取条数
+CLAUDE_BATCH      = 15      # Claude 每批处理条数
+MAX_CONTENT_CHARS = 3000    # 传给 Claude 的正文最大字符数
+JINA_TIMEOUT      = 25      # Jina Reader 超时秒数
+HTTP_TIMEOUT      = 12      # 普通请求超时秒数
+HOURS_LOOKBACK    = 24      # 只看过去多少小时的新闻
 
 HEADERS = {
     "User-Agent": (
@@ -53,38 +46,36 @@ HEADERS = {
 SESSION = requests.Session()
 SESSION.headers.update(HEADERS)
 
-# 文章正文容器选择器（BeautifulSoup 兜底用，按优先级排列）
 CONTENT_SELECTORS = [
-    "article",
-    "[itemprop='articleBody']",
-    ".article-body",
-    ".article-content",
-    ".post-content",
-    ".entry-content",
-    ".content-body",
-    ".story-body",
-    ".article__body",
-    ".news-content",
-    "main",
+    "article", "[itemprop='articleBody']", ".article-body",
+    ".article-content", ".post-content", ".entry-content",
+    ".content-body", ".story-body", ".article__body", ".news-content", "main",
 ]
 
 # ─── 工具函数 ──────────────────────────────────────────────────────────────────
 
-def load_seen() -> set:
-    if os.path.exists(SEEN_FILE):
-        with open(SEEN_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    return set()
+def now_utc():
+    return datetime.now(timezone.utc)
 
-def save_seen(seen: set):
-    with open(SEEN_FILE, "w", encoding="utf-8") as f:
-        json.dump(list(seen), f, ensure_ascii=False, indent=2)
+def is_within_24h(pub_date) -> bool:
+    """判断发布时间是否在过去 24 小时内，解析失败时返回 True（保留）"""
+    if not pub_date:
+        return True
+    try:
+        if isinstance(pub_date, str):
+            dt = parsedate_to_datetime(pub_date)
+        else:
+            dt = pub_date
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return now_utc() - dt <= timedelta(hours=HOURS_LOOKBACK)
+    except Exception:
+        return True
 
 def make_id(url: str) -> str:
     return hashlib.md5(url.encode()).hexdigest()
 
 def clean_html(html: str, max_len: int = MAX_CONTENT_CHARS) -> str:
-    """HTML 转纯文本并截断"""
     if not html:
         return ""
     text = BeautifulSoup(html, "html.parser").get_text(separator="\n").strip()
@@ -107,105 +98,102 @@ def make_item(source: str, emoji: str, title: str, link: str,
         "source":      source,
         "emoji":       emoji,
         "title":       title.strip(),
-        "content":     content,       # 文章正文，传给 Claude
-        "rss_summary": rss_summary,   # RSS 摘要，Jina/BS 都失败时的最终兜底
-        "summary":     "",            # Claude 填写
+        "content":     content,
+        "rss_summary": rss_summary,
+        "summary":     "",
         "link":        link.strip(),
         "importance":  1,
     }
 
-# ─── 文章正文抓取 ──────────────────────────────────────────────────────────────
-
-def fetch_article_content(url: str) -> str:
-    """
-    抓取文章正文。
-    优先用 Jina Reader（支持 JS 渲染的 SPA，如晚点、爱意若）。
-    Jina 失败时降级为 requests + BeautifulSoup。
-    """
-    # ① Jina Reader
-    jina_url = f"https://r.jina.ai/{url}"
+def jina_fetch(url: str) -> str:
+    """用 Jina Reader 抓取任意 URL 的纯文本内容"""
     try:
         r = SESSION.get(
-            jina_url,
+            f"https://r.jina.ai/{url}",
             timeout=JINA_TIMEOUT,
             headers={**HEADERS, "Accept": "text/plain", "X-Return-Format": "text"},
         )
         if r.status_code == 200 and len(r.text.strip()) > 200:
-            return r.text.strip()[:MAX_CONTENT_CHARS]
+            return r.text.strip()
     except Exception as e:
-        print(f"  Jina Reader 失败 ({url[:60]}): {e}")
+        print(f"  Jina 失败 ({url[:60]}): {e}")
+    return ""
 
-    # ② 降级：requests + BeautifulSoup
-    r = http_get(url, timeout=HTTP_TIMEOUT)
+# ─── 文章正文抓取 ──────────────────────────────────────────────────────────────
+
+def fetch_article_content(url: str) -> str:
+    """优先 Jina Reader，失败降级为 BeautifulSoup"""
+    content = jina_fetch(url)
+    if content:
+        return content[:MAX_CONTENT_CHARS]
+
+    # 降级：BeautifulSoup
+    r = http_get(url)
     if not r:
         return ""
     soup = BeautifulSoup(r.text, "lxml")
-    # 去掉噪音标签
-    for tag in soup.select(
-        "nav, header, footer, aside, script, style, "
-        ".ad, .ads, .advertisement, .sponsored, "
-        ".related, .recommend, .sidebar"
-    ):
+    for tag in soup.select("nav,header,footer,aside,script,style,"
+                            ".ad,.ads,.advertisement,.sponsored,.related,.sidebar"):
         tag.decompose()
     for sel in CONTENT_SELECTORS:
         el = soup.select_one(sel)
         if el:
             text = el.get_text(separator="\n").strip()
-            text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+            text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
             if len(text) > 200:
                 return text[:MAX_CONTENT_CHARS]
-    # ③ 最终兜底：body 全文
     body = soup.find("body")
     if body:
         text = body.get_text(separator="\n").strip()
-        text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+        text = "\n".join(l.strip() for l in text.splitlines() if l.strip())
         return text[:MAX_CONTENT_CHARS]
     return ""
 
-
 def enrich_content(items: list) -> list:
-    """
-    对 content 为空的条目逐篇抓取文章正文。
-    RSS 中已有全文（content:encoded）的条目直接跳过。
-    """
+    """对 content 为空的条目，用 Jina/BeautifulSoup 补全正文"""
     need = [it for it in items if not it["content"]]
     if not need:
         return items
-    print(f"  补充抓取 {len(need)} 篇文章正文（Jina Reader）...")
+    print(f"  补充抓取 {len(need)} 篇文章正文...")
     for it in need:
         content = fetch_article_content(it["link"])
         it["content"] = content if content else it["rss_summary"]
-        time.sleep(1.0)   # 避免请求过快
+        time.sleep(1.0)
     return items
 
 # ─── RSS 通用抓取 ──────────────────────────────────────────────────────────────
 
 def from_rss(url: str, source: str, emoji: str) -> list:
     """
-    解析 RSS。
-    优先取 content:encoded 全文；否则取 description，
-    后续 enrich_content 会用 Jina 补全正文。
+    解析 RSS，只保留 24 小时内的条目。
+    优先取 content:encoded 全文；否则取 description，后续 enrich_content 补全。
     """
     try:
         feed = feedparser.parse(url)
         results = []
-        for e in feed.entries[:FETCH_LIMIT]:
+        for e in feed.entries[:FETCH_LIMIT * 2]:  # 多取一些，时间过滤后够用
             title = getattr(e, "title", "").strip()
             link  = getattr(e, "link",  "").strip()
             if not title or not link:
                 continue
-            # content:encoded 全文
+
+            # 24 小时过滤
+            pub = getattr(e, "published", getattr(e, "updated", None))
+            if not is_within_24h(pub):
+                continue
+
             full_content = ""
             if hasattr(e, "content") and e.content:
                 full_content = clean_html(e.content[0].get("value", ""))
             rss_summary = clean_html(
-                getattr(e, "summary", getattr(e, "description", "")),
-                max_len=500,
+                getattr(e, "summary", getattr(e, "description", "")), max_len=500
             )
             results.append(make_item(source, emoji, title, link,
-                                     content=full_content,
-                                     rss_summary=rss_summary))
-        print(f"  [{source}] {len(results)} 条 (RSS)")
+                                     content=full_content, rss_summary=rss_summary))
+            if len(results) >= FETCH_LIMIT:
+                break
+
+        print(f"  [{source}] {len(results)} 条 (RSS, 24h内)")
         return results
     except Exception as e:
         print(f"  [{source}] RSS 失败: {e}")
@@ -214,58 +202,57 @@ def from_rss(url: str, source: str, emoji: str) -> list:
 # ─── 各来源解析器 ──────────────────────────────────────────────────────────────
 
 def fetch_bbc():
-    # simp URL 实际重定向到 trad（繁体），由 Claude 统一转简体
     return from_rss("https://feeds.bbci.co.uk/zhongwen/trad/rss.xml", "BBC中文", "🌍")
 
 def fetch_reuters():
     return from_rss("https://cn.reuters.com/rssfeed/topnews", "路透中文", "📡")
 
 def fetch_latepost():
-    """晚点 LatePost：SPA 站点，只能抓到标题+链接，正文由 Jina 补全"""
-    r = http_get("https://www.latepost.com")
-    if not r:
+    """晚点 LatePost：SPA，用 Jina 抓首页列表，再逐篇抓正文"""
+    print("  [晚点LatePost] 用 Jina 抓首页...")
+    text = jina_fetch("https://www.latepost.com")
+    if not text:
         return []
-    soup = BeautifulSoup(r.text, "lxml")
-    results, seen_links = [], set()
 
-    # 尝试各种文章卡片选择器
-    cards = (soup.select(".article-item") or soup.select("article")
-             or soup.select("[class*='article']"))
-    for card in cards:
-        if len(results) >= FETCH_LIMIT:
-            break
-        h = card.find(["h1", "h2", "h3", "h4"])
-        a = (h.find("a", href=True) if h else None) or card.find("a", href=True)
-        if not a:
+    results, seen_links = [], set()
+    # Jina 返回 Markdown 格式，链接格式为 [标题](url)
+    matches = re.findall(r'\[([^\]]{5,80})\]\((https://www\.latepost\.com/[^\)]+)\)', text)
+    for title, href in matches:
+        title = title.strip()
+        href = href.strip()
+        if href in seen_links or len(title) < 5:
             continue
-        title_text = a.get_text(strip=True)
-        href = a["href"]
-        if not href.startswith("http"):
-            href = "https://www.latepost.com" + href
-        if href in seen_links or len(title_text) < 5:
+        # 过滤导航链接
+        if any(kw in title for kw in ["关于", "联系", "广告", "加入", "爆料"]):
             continue
         seen_links.add(href)
-        results.append(make_item("晚点LatePost", "🌃", title_text, href))
-
-    # 兜底：找包含关键路径的链接
-    if not results:
-        for a in soup.select("a[href]"):
-            if len(results) >= FETCH_LIMIT:
-                break
-            href = a["href"]
-            if not any(kw in href for kw in ["/news/", "/post/", "/article/", "/story/"]):
-                continue
-            if not href.startswith("http"):
-                href = "https://www.latepost.com" + href
-            if href in seen_links:
-                continue
-            title_text = a.get_text(strip=True)
-            if len(title_text) < 8:
-                continue
-            seen_links.add(href)
-            results.append(make_item("晚点LatePost", "🌃", title_text, href))
+        results.append(make_item("晚点LatePost", "🌃", title, href))
+        if len(results) >= FETCH_LIMIT:
+            break
 
     print(f"  [晚点LatePost] {len(results)} 条")
+    return results
+
+def fetch_aiera():
+    """爱意若（新智元）：SPA，用 Jina 抓首页列表，再逐篇抓正文"""
+    print("  [爱意若] 用 Jina 抓首页...")
+    text = jina_fetch("https://aiera.com.cn")
+    if not text:
+        return []
+
+    results, seen_links = [], set()
+    matches = re.findall(r'\[([^\]]{5,80})\]\((https://aiera\.com\.cn/[^\)]+)\)', text)
+    for title, href in matches:
+        title = title.strip()
+        href = href.strip()
+        if href in seen_links or len(title) < 5:
+            continue
+        seen_links.add(href)
+        results.append(make_item("爱意若", "💡", title, href))
+        if len(results) >= FETCH_LIMIT:
+            break
+
+    print(f"  [爱意若] {len(results)} 条")
     return results
 
 def fetch_jiqizhixin():
@@ -293,33 +280,6 @@ def fetch_jiqizhixin():
     print(f"  [机器之心] {len(results)} 条 (网页)")
     return results
 
-def fetch_aiera():
-    """爱意若：可能是 SPA，正文由 Jina 补全"""
-    r = http_get("https://aiera.com.cn/")
-    if not r:
-        return []
-    soup = BeautifulSoup(r.text, "lxml")
-    results, seen_links = [], set()
-    for sel in ["article h2 a, article h3 a", ".post-title a, .entry-title a",
-                "h2 a[href], h3 a[href]", ".card-title a"]:
-        for a in soup.select(sel):
-            if len(results) >= FETCH_LIMIT:
-                break
-            title_text = a.get_text(strip=True)
-            href = a.get("href", "")
-            if not href or len(title_text) < 5:
-                continue
-            if not href.startswith("http"):
-                href = "https://aiera.com.cn" + href
-            if href in seen_links:
-                continue
-            seen_links.add(href)
-            results.append(make_item("爱意若", "💡", title_text, href))
-        if results:
-            break
-    print(f"  [爱意若] {len(results)} 条")
-    return results
-
 def fetch_techcrunch():
     return from_rss("https://techcrunch.com/feed/", "TechCrunch", "🚀")
 
@@ -333,7 +293,6 @@ def fetch_mit():
     return from_rss("https://www.technologyreview.com/feed/", "MIT科技评论", "🔬")
 
 def fetch_tmtpost():
-    # 钛媒体 RSS 含 content:encoded 全文，enrich_content 会跳过这些条目
     results = from_rss("https://www.tmtpost.com/rss", "钛媒体", "⚗️")
     if results:
         return results
@@ -455,9 +414,9 @@ CLAUDE_PROMPT = """\
 
 【处理要求（仅对 relevant: true）】
 1. short_title：≤10 个中文字精简标题；繁体转简体。
-2. summary_3：严格基于正文内容，用 3 句话总结，每句 15~40 字，中文，繁体转简体。
+2. summary_3：严格基于正文内容，3 句话总结，每句 15~40 字，中文，繁体转简体。
    - 必须来自正文，不得凭标题推测。
-   - 正文为空或信息量不足时，填：【正文不可用，请点击原文查看】
+   - 正文为空或不足时填：【正文不可用，请点击原文查看】
 3. importance：AI / 大模型 / 芯片 / 量子计算 = 3；其他科技 / 网络安全 = 2；纯金融 / 纯地缘 = 1
 
 新闻列表：
@@ -508,7 +467,6 @@ def process_with_claude(items: list) -> list:
             )
             resp.raise_for_status()
             raw = resp.json()["content"][0]["text"].strip()
-            # 清除可能的 markdown 代码块标记
             if raw.startswith("```"):
                 raw = raw.split("```", 2)[1]
                 if raw.startswith("json"):
@@ -537,23 +495,32 @@ def process_with_claude(items: list) -> list:
 
     return processed
 
-# ─── 排序 & 限制每来源条数 ──────────────────────────────────────────────────────
+# ─── 排序 & 限制 ───────────────────────────────────────────────────────────────
 
 def sort_and_limit(items: list) -> list:
-    """每来源按重要性降序，取前 MAX_PER_SOURCE 条"""
-    groups: dict = {}
-    for it in items:
-        groups.setdefault(it["source"], []).append(it)
+    """
+    全局按重要性降序排列，
+    同时保证每个来源最多 MAX_PER_SOURCE 条，
+    总数不超过 MAX_TOTAL。
+    """
+    items_sorted = sorted(items, key=lambda x: x.get("importance", 1), reverse=True)
+    source_count: dict = {}
     result = []
-    for news_list in groups.values():
-        news_list.sort(key=lambda x: x.get("importance", 1), reverse=True)
-        result.extend(news_list[:MAX_PER_SOURCE])
+    for it in items_sorted:
+        src = it["source"]
+        if source_count.get(src, 0) >= MAX_PER_SOURCE:
+            continue
+        source_count[src] = source_count.get(src, 0) + 1
+        result.append(it)
+        if len(result) >= MAX_TOTAL:
+            break
     return result
 
 # ─── 飞书推送 ──────────────────────────────────────────────────────────────────
 
 def build_card(items: list) -> dict:
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    # 按来源分组，保持全局排序顺序
     groups: dict = {}
     for it in items:
         groups.setdefault(it["source"], []).append(it)
@@ -580,14 +547,15 @@ def build_card(items: list) -> dict:
 
     elements.append({
         "tag":      "note",
-        "elements": [{"tag": "plain_text", "content": f"共 {len(items)} 条 · {now}"}],
+        "elements": [{"tag": "plain_text",
+                      "content": f"过去 24 小时 · 共 {len(items)} 条 · {now}"}],
     })
 
     return {
         "msg_type": "interactive",
         "card": {
             "header": {
-                "title":    {"tag": "plain_text", "content": f"📰 新闻速递 · {now}"},
+                "title":    {"tag": "plain_text", "content": f"📰 每日新闻速递 · {now}"},
                 "template": "wathet",
             },
             "elements": elements,
@@ -622,8 +590,8 @@ FETCHERS = [
     ("BBC中文",      fetch_bbc),
     ("路透中文",     fetch_reuters),
     ("晚点LatePost", fetch_latepost),
-    ("机器之心",     fetch_jiqizhixin),
     ("爱意若",       fetch_aiera),
+    ("机器之心",     fetch_jiqizhixin),
     ("TechCrunch",   fetch_techcrunch),
     ("Wired",        fetch_wired),
     ("The Verge",    fetch_theverge),
@@ -642,12 +610,12 @@ FETCHERS = [
 def main():
     print(f"\n{'='*55}")
     print(f"开始抓取 · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"只保留过去 {HOURS_LOOKBACK} 小时内的新闻")
     print(f"{'='*55}")
 
-    seen = load_seen()
     all_items = []
 
-    # 1. 抓取各来源文章列表
+    # 1. 抓取各来源
     for name, fetcher in FETCHERS:
         try:
             results = fetcher()
@@ -656,33 +624,27 @@ def main():
             print(f"  [{name}] 异常: {e}")
         time.sleep(1.5)
 
-    # 2. 去除已推送条目
-    new_items = [it for it in all_items if it["id"] not in seen]
-    print(f"\n合计 {len(all_items)} 条，新内容 {len(new_items)} 条")
+    print(f"\n合计抓取 {len(all_items)} 条（24小时内）")
 
-    if not new_items:
-        print("无新内容，跳过推送")
+    if not all_items:
+        print("无内容，跳过推送")
         return
 
-    # 3. 补充抓取文章正文（Jina Reader，支持 JS 渲染）
-    print("\n补充抓取文章正文...")
-    new_items = enrich_content(new_items)
+    # 2. 补充抓取文章正文
+    print("\n补充抓取文章正文（Jina Reader）...")
+    all_items = enrich_content(all_items)
 
-    # 4. Claude 处理：过滤 + 精简标题 + 3 句摘要 + 重要性评分
-    print(f"\nClaude 处理中（{len(new_items)} 条）...")
-    processed = process_with_claude(new_items)
+    # 3. Claude 处理
+    print(f"\nClaude 处理中（{len(all_items)} 条）...")
+    processed = process_with_claude(all_items)
     print(f"过滤后保留 {len(processed)} 条")
 
-    # 5. 每来源排序 + 限制条数
+    # 4. 全局排序 + 限制条数
     final_items = sort_and_limit(processed)
-    print(f"最终推送 {len(final_items)} 条（每来源 ≤{MAX_PER_SOURCE} 条）")
+    print(f"最终推送 {len(final_items)} 条（top {MAX_TOTAL}，每来源≤{MAX_PER_SOURCE}）")
 
-    # 6. 推送飞书
+    # 5. 推送飞书
     send_to_feishu(final_items)
-
-    # 7. 保存去重记录（记录所有新抓到的，不只是推送的）
-    seen.update(it["id"] for it in new_items)
-    save_seen(seen)
 
     print("完成！\n")
 
