@@ -213,6 +213,7 @@ def fetch_latepost():
     text = jina_fetch("https://www.latepost.com")
     if not text:
         return []
+    print(f"  [晚点LatePost] Jina 返回内容预览: {text[:500]}")  #
 
     results, seen_links = [], set()
     # Jina 返回 Markdown 格式，链接格式为 [标题](url)
@@ -239,6 +240,7 @@ def fetch_aiera():
     text = jina_fetch("https://aiera.com.cn")
     if not text:
         return []
+    print(f"  [晚点LatePost] Jina 返回内容预览: {text[:500]}")  #
 
     results, seen_links = [], set()
     matches = re.findall(r'\[([^\]]{5,80})\]\((https://aiera\.com\.cn/[^\)]+)\)', text)
