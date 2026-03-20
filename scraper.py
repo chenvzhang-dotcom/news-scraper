@@ -220,7 +220,7 @@ def fetch_latepost():
                 continue
             link = "https://www.latepost.com" + detail_url
             summary = item.get("abstract", "")
-            results.append(make_item("晚点LatePost", "🌃", title, link, summary))
+            results.append(make_item("晚点LatePost", "🌃", title, link, rss_summary=summary))
         print(f"  [晚点LatePost] {len(results)} 条 (API)")
         return results
     except Exception as e:
@@ -417,7 +417,7 @@ def process_with_claude(items: list) -> list:
                 "source":  it["source"],
                 "title":   it["title"],
                 "content": it["content"][:MAX_CONTENT_CHARS] if it["content"] else "",
-                "abstract": it.get("summary", ""),
+                "abstract": it.get("rss_summary", ""),
             }
             for j, it in enumerate(batch)
         ]
