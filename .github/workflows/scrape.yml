@@ -2,7 +2,7 @@ name: 📰 News Scraper
 
 on:
   schedule:
-    # 北京时间（UTC+8）: 08:00 / 12:00 / 18:00
+    # 北京时间（UTC+8）: 08:00
     - cron: '0 0 * * *'   # 北京时间 08:00
   workflow_dispatch:        # 支持手动触发
 
@@ -15,10 +15,10 @@ jobs:
 
     steps:
       - name: 📥 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: 🐍 设置 Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -32,10 +32,3 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scraper.py
 
-      - name: 💾 保存去重记录
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git add seen_ids.json
-          git diff --cached --quiet || git commit -m "chore: update seen_ids [skip ci]"
-          git push
