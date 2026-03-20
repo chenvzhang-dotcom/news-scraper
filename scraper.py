@@ -208,7 +208,24 @@ def fetch_reuters():
     return from_rss("https://cn.reuters.com/rssfeed/topnews", "路透中文", "📡")
 
 def fetch_latepost():
-    return from_rss("https://rsshub.app/latepost", "晚点LatePost", "🌃")
+    try:
+        r = SESSION.post("https://www.latepost.com/site/index", data={"page": 1, "limit": 5}, timeout=12)
+        r.raise_for_status()
+        data = r.json()
+        results = []
+        for item in data.get("data", []):
+            title = item.get("title", "").strip()
+            detail_url = item.get("detail_url", "")
+            if not title or not detail_url:
+                continue
+            link = "https://www.latepost.com" + detail_url
+            summary = item.get("abstract", "")
+            results.append(make_item("晚点LatePost", "🌃", title, link, summary))
+        print(f"  [晚点LatePost] {len(results)} 条 (API)")
+        return results
+    except Exception as e:
+        print(f"  [晚点LatePost] API 失败: {e}")
+        return []
 
 def fetch_qbitai():
     return from_rss("https://www.qbitai.com/feed", "量子位", "⚛️")
