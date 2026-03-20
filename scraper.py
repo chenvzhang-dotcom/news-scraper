@@ -179,7 +179,7 @@ def from_rss(url: str, source: str, emoji: str) -> list:
 
             # 24 小时过滤
             pub = getattr(e, "published", getattr(e, "updated", None))
-            if not is_within_72h(pub):
+            if not is_within_24h(pub):
                 continue
 
             full_content = ""
