@@ -389,7 +389,7 @@ CLAUDE_PROMPT = """\
 1. short_title：≤10 个中文字精简标题；繁体转简体。
 2. summary_3：严格基于正文内容，3 句话总结，每句 15~40 字，中文，繁体转简体。
    - 必须来自正文，不得凭标题推测。
-   - 正文为空或不足时填：【正文不可用，请点击原文查看】
+   - 正文为空或不足时，用 abstract 字段的内容作为 summary_3，如果 abstract 也为空则填：【正文不可用，请点击原文查看】
 3. importance：AI / 大模型 / 芯片 / 量子计算 = 3；其他科技 / 网络安全 = 2；纯金融 / 纯地缘 = 1
 
 新闻列表：
@@ -417,6 +417,7 @@ def process_with_claude(items: list) -> list:
                 "source":  it["source"],
                 "title":   it["title"],
                 "content": it["content"][:MAX_CONTENT_CHARS] if it["content"] else "",
+                "abstract": it.get("summary", ""),
             }
             for j, it in enumerate(batch)
         ]
