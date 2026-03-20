@@ -208,54 +208,10 @@ def fetch_reuters():
     return from_rss("https://cn.reuters.com/rssfeed/topnews", "路透中文", "📡")
 
 def fetch_latepost():
-    """晚点 LatePost：SPA，用 Jina 抓首页列表，再逐篇抓正文"""
-    print("  [晚点LatePost] 用 Jina 抓首页...")
-    text = jina_fetch("https://www.latepost.com")
-    if not text:
-        return []
-    print(f"  [晚点LatePost] Jina 返回内容预览: {text[:500]}")  #
+    return from_rss("https://rsshub.app/latepost", "晚点LatePost", "🌃")
 
-    results, seen_links = [], set()
-    # Jina 返回 Markdown 格式，链接格式为 [标题](url)
-    matches = re.findall(r'\[([^\]]{5,80})\]\((https://www\.latepost\.com/[^\)]+)\)', text)
-    for title, href in matches:
-        title = title.strip()
-        href = href.strip()
-        if href in seen_links or len(title) < 5:
-            continue
-        # 过滤导航链接
-        if any(kw in title for kw in ["关于", "联系", "广告", "加入", "爆料"]):
-            continue
-        seen_links.add(href)
-        results.append(make_item("晚点LatePost", "🌃", title, href))
-        if len(results) >= FETCH_LIMIT:
-            break
-
-    print(f"  [晚点LatePost] {len(results)} 条")
-    return results
-
-def fetch_aiera():
-    """爱意若（新智元）：SPA，用 Jina 抓首页列表，再逐篇抓正文"""
-    print("  [爱意若] 用 Jina 抓首页...")
-    text = jina_fetch("https://aiera.com.cn")
-    if not text:
-        return []
-    print(f"  [晚点LatePost] Jina 返回内容预览: {text[:500]}")  #
-
-    results, seen_links = [], set()
-    matches = re.findall(r'\[([^\]]{5,80})\]\((https://aiera\.com\.cn/[^\)]+)\)', text)
-    for title, href in matches:
-        title = title.strip()
-        href = href.strip()
-        if href in seen_links or len(title) < 5:
-            continue
-        seen_links.add(href)
-        results.append(make_item("爱意若", "💡", title, href))
-        if len(results) >= FETCH_LIMIT:
-            break
-
-    print(f"  [爱意若] {len(results)} 条")
-    return results
+def fetch_qbitai():
+    return from_rss("https://www.qbitai.com/feed", "量子位", "⚛️")
 
 def fetch_jiqizhixin():
     results = from_rss("https://www.jiqizhixin.com/rss", "机器之心", "🤖")
@@ -590,7 +546,7 @@ FETCHERS = [
     ("BBC中文",      fetch_bbc),
     ("路透中文",     fetch_reuters),
     ("晚点LatePost", fetch_latepost),
-    ("爱意若",       fetch_aiera),
+    ("量子位",       fetch_qbitai),
     ("机器之心",     fetch_jiqizhixin),
     ("TechCrunch",   fetch_techcrunch),
     ("Wired",        fetch_wired),
