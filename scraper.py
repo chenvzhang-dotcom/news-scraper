@@ -878,20 +878,6 @@ def fmt_cap(v: int) -> str:
     return f"${v/1e6:.0f}M"
 
 
-def yf_quote_market_cap(ticker: str) -> int:
-    """用 Yahoo Finance quote API 获取实时市值，失败返回 0"""
-    try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        r = requests.get(url, params={"interval": "1d", "range": "1d"},
-                         headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code != 200:
-            return 0
-        meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
-        return int(meta.get("marketCap", 0) or 0)
-    except Exception:
-        return 0
-
-
 def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
     """批量查美股白名单，筛出 target_dates 范围内有业绩的公司"""
     import yfinance as yf
@@ -914,14 +900,10 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
                 d_str = str(d)[:10]
                 if d_str not in target_dates:
                     continue
-                # 市值用 Yahoo Finance quote API 实时拉
-                market_cap = yf_quote_market_cap(ticker)
-                try:
-                    info   = t.fast_info
-                    sector = getattr(info, "sector", "") or ""
-                    name   = getattr(info, "shortName", ticker) or ticker
-                except Exception:
-                    sector, name = "", ticker
+                info       = t.info
+                market_cap = info.get("marketCap", 0) or 0
+                sector     = info.get("sector", "") or ""
+                name       = info.get("shortName", ticker) or ticker
                 results.append({
                     "ticker":     ticker,
                     "company":    name,
@@ -944,22 +926,15 @@ def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
     """
     查港股/韩股白名单。
     - ticker 为待确认的跳过
-    - 找不到日期或日期不在窗口内的，直接不显示（不列"待确认"）
-    - 市值用 Yahoo Finance quote API 实时拉
+    - 找不到日期或日期不在窗口内的，直接不显示
     """
     import yfinance as yf
     results = []
     valid = [w for w in watchlist if w["ticker"] != "待确认"]
-    if not valid:
-        return []
-
-    yf_tickers = yf.Tickers(" ".join(w["ticker"] for w in valid))
 
     for w in valid:
         try:
-            t = yf_tickers.tickers.get(w["ticker"])
-            if not t:
-                continue
+            t = yf.Ticker(w["ticker"])
             cal = t.calendar
             if not cal or "Earnings Date" not in cal:
                 continue
@@ -969,7 +944,8 @@ def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
             for d in dates:
                 d_str = str(d)[:10]
                 if d_str in target_dates:
-                    market_cap = yf_quote_market_cap(w["ticker"])
+                    info       = t.info
+                    market_cap = info.get("marketCap", 0) or 0
                     results.append(dict(w,
                         date=d_str,
                         confirmed=True,
@@ -977,7 +953,6 @@ def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
                         market_cap=market_cap,
                     ))
                     break
-            # 找不到匹配日期：直接跳过，不列出
         except Exception:
             continue
 
@@ -1049,7 +1024,7 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
         "content": "  ".join(filter(None, [
             "BMO=盘前 · AMC=盘后",
             f"更新于 {bj}",
-            "来源：yfinance / IR 官网",
+            "来源：yfinance / Yahoo Finance",
         ]))}]})
 
     return {
