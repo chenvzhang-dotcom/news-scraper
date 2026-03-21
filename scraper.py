@@ -770,12 +770,10 @@ def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
 
-    elements.append({"tag": "action", "actions": [{
-        "tag": "button",
-        "text": {"tag": "plain_text", "content": "查看原文 PDF"},
-        "type": "default",
-        "url": pdf_url,
-    }]})
+    elements.append({
+        "tag":  "div",
+        "text": {"tag": "lark_md", "content": f"[查看原文 PDF]({pdf_url})"},
+    })
     elements.append({"tag": "note", "elements": [
         {"tag": "plain_text",
          "content": f"JINSA · {date_str} · 北京时间 {bj}"}
