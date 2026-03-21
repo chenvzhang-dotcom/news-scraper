@@ -5,7 +5,7 @@ on:
     - cron: '0 0 * * *'      # 北京时间 08:00 — 新闻日报
     - cron: '30 15 * * *'    # 北京时间 23:30 — JINSA 第一次检查
     - cron: '0 17 * * *'     # 北京时间 01:00 — JINSA 第二次检查
-    - cron: '0 7 * * 0'      # 北京时间 15:00 周日 — 业绩日历
+    - cron: '0 7 1-7,15-21 * 0'  # 北京时间 15:00，每月第1和第3个周日 — 业绩日历
   workflow_dispatch:
     inputs:
       mode:
@@ -69,7 +69,7 @@ jobs:
         run: python scraper.py jinsa
 
       - name: 💾 保存推送状态
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: jinsa-state
@@ -80,7 +80,7 @@ jobs:
   earnings-calendar:
     if: >
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'earnings') ||
-      github.event.schedule == '0 7 * * 0'
+      github.event.schedule == '0 7 1-7,15-21 * 0'
     runs-on: ubuntu-latest
     steps:
       - name: 📥 检出代码
@@ -98,7 +98,5 @@ jobs:
       - name: 📅 推送业绩日历
         env:
           FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
-          EARNINGSWHISPERS_EMAIL:    ${{ secrets.EARNINGSWHISPERS_EMAIL }}
-          EARNINGSWHISPERS_PASSWORD: ${{ secrets.EARNINGSWHISPERS_PASSWORD }}
           ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scraper.py earnings

@@ -26,8 +26,7 @@ from bs4 import BeautifulSoup
 FEISHU_WEBHOOK             = os.environ.get("FEISHU_WEBHOOK", "")
 ANTHROPIC_API_KEY          = os.environ.get("ANTHROPIC_API_KEY", "")
 FEISHU_WEBHOOK_EARNINGS    = os.environ.get("FEISHU_WEBHOOK_EARNINGS", "")
-EARNINGSWHISPERS_EMAIL     = os.environ.get("EARNINGSWHISPERS_EMAIL", "")
-EARNINGSWHISPERS_PASSWORD  = os.environ.get("EARNINGSWHISPERS_PASSWORD", "")
+API_NINJAS_KEY             = os.environ.get("API_NINJAS_KEY", "")
 
 JINSA_STATE_FILE = "jinsa_sent.json"
 
@@ -636,7 +635,6 @@ def feishu_send(webhook: str, payload: dict, label: str = "") -> bool:
         print(f"⚠️  未设置 Webhook，跳过 {label}")
         return False
     try:
-        print(f"  {label} payload 预览: {json.dumps(payload, ensure_ascii=False)[:500]}")
         resp = SESSION.post(webhook, json=payload,
                             headers={"Content-Type": "application/json"}, timeout=15)
         data = resp.json()
@@ -745,9 +743,9 @@ def jinsa_numbers_via_claude(text: str) -> str:
 def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
     bj = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
     cats = {
-        "伊朗武器发射": ("🚀", []),
-        "美以打击":     ("🎯", []),
-        "伤亡统计":     ("💀", []),
+        "伊朗武器发射": ("【导弹】", []),
+        "美以打击":     ("【打击】", []),
+        "伤亡统计":     ("【伤亡】", []),
         "能源经济":     ("⛽", []),
         "其他":         ("📊", []),
     }
@@ -797,7 +795,7 @@ def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
         "card": {
             "header": {
                 "title":    {"tag": "plain_text",
-                             "content": f"📊 JINSA 战情数字 · {date_str}"},
+                             "content": f"JINSA 战情数字 · {date_str}"},
                 "template": "wathet",
             },
             "elements": elements,
@@ -841,162 +839,38 @@ def main_jinsa():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 每周业绩日历推送
+# 每两周业绩日历推送
 # ══════════════════════════════════════════════════════════════════════════════
-
-TECH_SECTORS  = {"Technology", "Communication Services"}
-TECH_KEYWORDS = {"tech", "software", "semiconductor", "internet", "digital",
-                 "cloud", "data", "ai", "cyber", "payment", "streaming",
-                 "social", "gaming", "fintech"}
 
 WEEKDAY_ZH = {0: "周一", 1: "周二", 2: "周三", 3: "周四", 4: "周五"}
 
-HK_WATCH = [
-    {"company": "阿里巴巴", "ticker": "9988.HK",
-     "ir_url":  "https://www.alibabagroup.com/en-US/ir/results",
-     "market_cap_approx": 300_000_000_000, "sector": "电商/云计算"},
-    {"company": "腾讯控股", "ticker": "0700.HK",
-     "ir_url":  "https://www.tencent.com/en-us/ir/financial-news.html",
-     "market_cap_approx": 530_000_000_000, "sector": "游戏/社交/云"},
+# 空窗月（基本没有业绩）
+SKIP_MONTHS = {3, 6, 9, 12}
+
+# 美股白名单
+US_WATCHLIST = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA", "AVGO", "ORCL",
+    "AMD", "INTC", "MU", "MRVL",
+    "CRM", "DDOG",
+    "NFLX", "UBER", "ABNB", "SNAP", "RDDT",
+    "ASML", "SMCI",
+    "RBLX", "LITE", "COHR", "SNDK", "HOOD", "NOK", "PDD", "BABA", "TCEHY", "APP",
+    "PYPL", "SQ",
 ]
 
-
-def is_tech_co(sector: str, industry: str) -> bool:
-    if sector in TECH_SECTORS:
-        return True
-    combined = f"{sector} {industry}".lower()
-    return any(kw in combined for kw in TECH_KEYWORDS)
-
-
-def ew_login():
-    """登录 Earnings Whispers，返回已登录的 Session；失败返回 None"""
-    if not EARNINGSWHISPERS_EMAIL or not EARNINGSWHISPERS_PASSWORD:
-        print("  未设置 EW 账号密码")
-        return None
-    try:
-        s = requests.Session()
-        s.headers.update(HEADERS)
-        r0 = s.get("https://earningswhispers.com/", timeout=15)
-        soup0 = BeautifulSoup(r0.text, "lxml")
-
-        form_data = {
-            "Email":      EARNINGSWHISPERS_EMAIL,
-            "Password":   EARNINGSWHISPERS_PASSWORD,
-            "RememberMe": "true",
-        }
-        tok = soup0.find("input", {"name": "__RequestVerificationToken"})
-        if tok:
-            form_data["__RequestVerificationToken"] = tok.get("value", "")
-
-        r1 = s.post("https://earningswhispers.com/Account/SignIn",
-                    data=form_data, timeout=15, allow_redirects=True)
-
-        logged_in = ("signout" in r1.text.lower() or
-                     r1.url.rstrip("/") != "https://earningswhispers.com/Account/SignIn")
-        if logged_in:
-            print("  EW 登录成功")
-            return s
-        print("  EW 登录失败（检查密码或页面结构是否变化）")
-        return None
-    except Exception as e:
-        print(f"  EW 登录异常: {e}")
-        return None
-
-
-def ew_scrape_day(session, date_str: str) -> list:
-    """
-    抓取 Earnings Whispers 某天的公司列表。
-    date_str 格式：20260323
-    """
-    results = []
-    urls = [
-        f"https://earningswhispers.com/calendar/{date_str}",
-        f"https://old.earningswhispers.com/calendar?sb=p&d={date_str}&t=all",
-    ]
-    for url in urls:
-        try:
-            r = session.get(url, timeout=15)
-            if r.status_code != 200:
-                continue
-            soup = BeautifulSoup(r.text, "lxml")
-
-            # 尝试多种 CSS 选择器（实际结构需根据页面调整）
-            rows = (soup.select(".stockrow, .earnings-row, tr[data-ticker]") or
-                    soup.select("li[data-ticker], div[data-ticker]"))
-
-            for row in rows:
-                # 获取 ticker
-                ticker = row.get("data-ticker", "")
-                if not ticker:
-                    el = row.select_one(".ticker, .symbol")
-                    ticker = el.get_text(strip=True) if el else ""
-                if not ticker:
-                    continue
-
-                name_el = row.select_one(".company, .cname, .companyname")
-                time_el = row.select_one(".time, .when, [class*='bmo'], [class*='amc']")
-                call_el = row.select_one(".calltime, .call")
-
-                name     = name_el.get_text(strip=True) if name_el else ticker
-                time_raw = time_el.get_text(strip=True).upper() if time_el else ""
-                time_badge = ("BMO" if "BMO" in time_raw or "BEFORE" in time_raw
-                              else "AMC" if "AMC" in time_raw or "AFTER" in time_raw
-                              else "")
-                call_time = call_el.get_text(strip=True) if call_el else ""
-
-                results.append({
-                    "ticker":    ticker.upper(),
-                    "company":   name,
-                    "date":      f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}",
-                    "time":      time_badge,
-                    "call_time": call_time,
-                    "source":    "EW",
-                })
-
-            if results:
-                print(f"    {date_str}：找到 {len(results)} 家")
-                break
-
-        except Exception as e:
-            print(f"    {date_str} 抓取失败: {e}")
-
-    return results
-
-
-def yf_get_info(ticker: str) -> dict:
-    """用 yfinance 获取市值、行业、分析师覆盖数"""
-    try:
-        import yfinance as yf
-        info = yf.Ticker(ticker).info
-        return {
-            "market_cap": info.get("marketCap", 0) or 0,
-            "sector":     info.get("sector", ""),
-            "industry":   info.get("industry", ""),
-            "analysts":   info.get("numberOfAnalystOpinions", 0) or 0,
-            "name":       info.get("shortName", "") or "",
-        }
-    except Exception:
-        return {"market_cap": 0, "sector": "", "industry": "", "analysts": 0, "name": ""}
-
-
-def filter_companies(companies: list) -> list:
-    """筛选：科技相关 + 市值 ≥ $5B + 分析师 ≥ 5"""
-    result = []
-    print(f"  筛选 {len(companies)} 家...")
-    for co in companies:
-        info = yf_get_info(co["ticker"])
-        if info["market_cap"] < 5_000_000_000:
-            continue
-        if not is_tech_co(info["sector"], info["industry"]):
-            continue
-        if info["analysts"] < 5:
-            continue
-        co.update({k: info[k] for k in ("market_cap", "sector", "industry")})
-        if info["name"]:
-            co["company"] = info["name"]
-        result.append(co)
-        time.sleep(0.3)
-    return result
+# 港股 + 韩股白名单
+INTL_WATCHLIST = [
+    {"company": "腾讯控股",  "ticker": "0700.HK",   "market": "港股", "freq": "季报"},
+    {"company": "阿里巴巴",  "ticker": "9988.HK",   "market": "港股", "freq": "季报"},
+    {"company": "小米集团",  "ticker": "1810.HK",   "market": "港股", "freq": "季报"},
+    {"company": "快手",      "ticker": "1024.HK",   "market": "港股", "freq": "季报"},
+    {"company": "泡泡玛特",  "ticker": "9992.HK",   "market": "港股", "freq": "半年报"},
+    {"company": "MiniMax",   "ticker": "待确认",     "market": "港股", "freq": "季报"},
+    {"company": "智谱",      "ticker": "待确认",     "market": "港股", "freq": "季报"},
+    {"company": "壁仞科技",  "ticker": "待确认",     "market": "港股", "freq": "季报"},
+    {"company": "三星电子",  "ticker": "005930.KS", "market": "韩股", "freq": "季报"},
+    {"company": "SK 海力士", "ticker": "000660.KS", "market": "韩股", "freq": "季报"},
+]
 
 
 def fmt_cap(v: int) -> str:
@@ -1007,143 +881,153 @@ def fmt_cap(v: int) -> str:
     return f"${v/1e6:.0f}M"
 
 
-def hk_check_ir(hk: dict):
-    """
-    检查港股 IR 页面，查找近 60 天内的业绩发布日期。
-    返回含 date 字段的 dict，或 None（近期无公告）。
-    """
-    r = http_get(hk["ir_url"])
-    if not r:
-        return None
+def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
+    """批量查美股白名单，筛出 target_dates 范围内有业绩的公司"""
+    import yfinance as yf
+    results = []
+    print(f"  批量查询 {len(tickers)} 家美股...")
+    yf_tickers = yf.Tickers(" ".join(tickers))
 
-    text = r.text
-    bj_now = datetime.now(timezone(timedelta(hours=8)))
-
-    # 找页面中结果公告附近的日期
-    date_pat = re.compile(
-        r"(?:results?\s+(?:announcement|release|date)|interim|annual\s+results?)"
-        r".{0,150}?(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\w+\s+\d{1,2},?\s+\d{4})",
-        re.IGNORECASE | re.DOTALL,
-    )
-    for m in date_pat.finditer(text):
-        raw = m.group(1).strip()
-        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y",
-                    "%B %d %Y",  "%b %d %Y"):
-            try:
-                dt = datetime.strptime(raw, fmt)
-                delta = (dt - bj_now.replace(tzinfo=None))
-                if timedelta(0) <= delta <= timedelta(days=60):
-                    return dict(hk,
-                                date=dt.strftime("%Y-%m-%d"),
-                                confirmed=True, time="", call_time="待定")
-            except ValueError:
+    for ticker in tickers:
+        try:
+            t = yf_tickers.tickers.get(ticker)
+            if not t:
                 continue
+            cal = t.calendar
+            if not cal or "Earnings Date" not in cal:
+                continue
+            dates = cal["Earnings Date"]
+            if not isinstance(dates, list):
+                dates = [dates]
+            for d in dates:
+                d_str = str(d)[:10]
+                if d_str not in target_dates:
+                    continue
+                info       = t.info
+                market_cap = info.get("marketCap", 0) or 0
+                sector     = info.get("sector", "")
+                name       = info.get("shortName", ticker)
+                results.append({
+                    "ticker":     ticker,
+                    "company":    name,
+                    "date":       d_str,
+                    "time":       "",
+                    "market_cap": market_cap,
+                    "sector":     sector,
+                    "market":     "美股",
+                    "confirmed":  True,
+                })
+                break
+        except Exception:
+            continue
 
-    # 未找到确切日期，仍显示占位（让用户知道系统在追踪）
-    return dict(hk, date="待确认", confirmed=False, time="", call_time="待定")
+    print(f"  美股找到 {len(results)} 家")
+    return results
 
 
-def get_next_week_dates():
-    """返回下周一到周五的日期列表（YYYYMMDD）及周描述"""
-    bj = datetime.now(timezone(timedelta(hours=8)))
-    offset = (7 - bj.weekday()) % 7 or 7
-    mon = bj + timedelta(days=offset)
-    dates = [(mon + timedelta(days=i)).strftime("%Y%m%d") for i in range(5)]
-    week_str = (f"{mon.strftime('%m月%d日')} — "
-                f"{(mon + timedelta(days=4)).strftime('%m月%d日')}")
+def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
+    """查港股/韩股白名单，ticker 为待确认的跳过"""
+    import yfinance as yf
+    results = []
+    valid = [w for w in watchlist if w["ticker"] != "待确认"]
+    if not valid:
+        return []
+
+    yf_tickers = yf.Tickers(" ".join(w["ticker"] for w in valid))
+
+    for w in valid:
+        try:
+            t = yf_tickers.tickers.get(w["ticker"])
+            if not t:
+                results.append(dict(w, date="待确认", confirmed=False, time=""))
+                continue
+            cal = t.calendar
+            if not cal or "Earnings Date" not in cal:
+                results.append(dict(w, date="待确认", confirmed=False, time=""))
+                continue
+            dates = cal["Earnings Date"]
+            if not isinstance(dates, list):
+                dates = [dates]
+            matched = False
+            for d in dates:
+                d_str = str(d)[:10]
+                if d_str in target_dates:
+                    results.append(dict(w, date=d_str, confirmed=True, time=""))
+                    matched = True
+                    break
+            if not matched:
+                results.append(dict(w, date="待确认", confirmed=False, time=""))
+        except Exception:
+            results.append(dict(w, date="待确认", confirmed=False, time=""))
+
+    print(f"  港韩股处理 {len(results)} 家")
+    return results
+
+
+def get_next_two_weeks_dates():
+    """返回未来 14 天的日期集合（YYYY-MM-DD）及描述"""
+    bj    = datetime.now(timezone(timedelta(hours=8)))
+    today = bj.date()
+    dates = {str(today + timedelta(days=i)) for i in range(1, 15)}
+    start = today + timedelta(days=1)
+    end   = today + timedelta(days=14)
+    week_str = f"{start.strftime('%m月%d日')} — {end.strftime('%m月%d日')}"
     return dates, week_str
 
 
-def build_earnings_card(us_cos: list, hk_cos: list, week_str: str) -> dict:
-    bj = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
-    all_cos = us_cos + [dict(c, source="HK") for c in hk_cos if c]
-
+def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
+    bj      = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M")
+    all_cos = us_cos + intl_cos
     elements = []
 
-    if not all_cos:
-        elements.append({"tag": "div",
-                          "text": {"tag": "lark_md",
-                                   "content": "本周无符合条件的科技公司业绩发布。"}})
-    else:
-        # 按日期分组
-        by_date = {}
-        for co in all_cos:
-            by_date.setdefault(co.get("date", "待确认"), []).append(co)
+    by_date = {}
+    for co in all_cos:
+        by_date.setdefault(co.get("date", "待确认"), []).append(co)
 
-        confirmed = sorted(k for k in by_date if k != "待确认")
-        pending   = ["待确认"] if "待确认" in by_date else []
+    confirmed = sorted(k for k in by_date if k != "待确认")
+    pending   = ["待确认"] if "待确认" in by_date else []
 
-        # 收集有公司的日期，用于后面生成备注
-        dates_with_cos = set(confirmed)
-
-        for dk in confirmed + pending:
-            if dk != "待确认":
-                try:
-                    d = datetime.strptime(dk, "%Y-%m-%d")
-                    label = f"**{WEEKDAY_ZH.get(d.weekday(), '')} · {d.strftime('%m月%d日')}**"
-                except Exception:
-                    label = f"**{dk}**"
-            else:
-                label = "**日期待确认**"
-
-            elements.append({"tag": "div",
-                              "text": {"tag": "lark_md", "content": label}})
-
-            for co in by_date[dk]:
-                is_hk  = co.get("source") == "HK"
-                ticker = co["ticker"]
-                name   = co.get("company", ticker)
-                badges = ""
-                if co.get("time"):
-                    badges += f" `{co['time']}`"
-                if not co.get("confirmed", True):
-                    badges += " `待确认`"
-
-                mkt    = "港股" if is_hk else "美股"
-                cap    = fmt_cap(co.get("market_cap") or co.get("market_cap_approx", 0))
-                sector = co.get("sector", "")
-
-                extras = []
-                call_t = co.get("call_time", "")
-                if call_t and call_t not in ("", "待定"):
-                    extras.append(f"电话会：{call_t}")
-                if co.get("ir_url"):
-                    extras.append(f"[IR 页面]({co['ir_url']})")
-
-                line2 = f"{mkt} · {cap} · {sector}"
-                if extras:
-                    line2 += f"\n{' · '.join(extras)}"
-
-                content = f"**{name}** `{ticker}`{badges}\n{line2}"
-                elements.append({"tag": "div",
-                                  "text": {"tag": "lark_md", "content": content}})
-
-            elements.append({"tag": "hr"})
-
-        if elements and elements[-1].get("tag") == "hr":
-            elements.pop()
-
-        # 生成空白日备注
-        bj_obj = datetime.now(timezone(timedelta(hours=8)))
-        offset = (7 - bj_obj.weekday()) % 7 or 7
-        mon    = bj_obj + timedelta(days=offset)
-        empty_days = []
-        for i in range(5):
-            d  = (mon + timedelta(days=i))
-            dk = d.strftime("%Y-%m-%d")
-            if dk not in dates_with_cos:
-                empty_days.append(WEEKDAY_ZH.get(d.weekday(), ""))
-        if empty_days:
-            note_msg = f"{'、'.join(empty_days)}无符合条件的科技公司发布业绩。"
+    for dk in confirmed + pending:
+        if dk != "待确认":
+            try:
+                d     = datetime.strptime(dk, "%Y-%m-%d")
+                label = f"**{WEEKDAY_ZH.get(d.weekday(), '')} · {d.strftime('%m月%d日')}**"
+            except Exception:
+                label = f"**{dk}**"
         else:
-            note_msg = ""
+            label = "**日期待确认**"
+
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": label}})
+
+        for co in by_date[dk]:
+            ticker  = co["ticker"]
+            name    = co.get("company", ticker)
+            market  = co.get("market", "美股")
+            badges  = ""
+            if co.get("time"):
+                badges += f" `{co['time']}`"
+            if not co.get("confirmed", True):
+                badges += " `待确认`"
+            cap    = fmt_cap(co.get("market_cap", 0))
+            sector = co.get("sector", co.get("freq", ""))
+            line2  = f"{market} · {cap} · {sector}" if cap != "$0" else f"{market} · {co.get('freq', '')}"
+            content = f"**{name}** `{ticker}`{badges}\n{line2}"
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": content}})
+
+        elements.append({"tag": "hr"})
+
+    if elements and elements[-1].get("tag") == "hr":
+        elements.pop()
+
+    if not elements:
+        elements.append({"tag": "div", "text": {"tag": "lark_md",
+                          "content": "未来两周内无业绩发布。"}})
 
     elements.append({"tag": "note", "elements": [{"tag": "plain_text",
         "content": "  ".join(filter(None, [
             "BMO=盘前 · AMC=盘后",
-            note_msg if all_cos else "",
             f"更新于 {bj}",
-            "来源：Earnings Whispers / IR 官网",
+            "来源：yfinance / IR 官网",
         ]))}]})
 
     return {
@@ -1151,7 +1035,7 @@ def build_earnings_card(us_cos: list, hk_cos: list, week_str: str) -> dict:
         "card": {
             "header": {
                 "title":    {"tag": "plain_text",
-                             "content": f"📅 下周业绩日历 · {week_str}"},
+                             "content": f"下两周业绩日历 · {week_str}"},
                 "template": "green",
             },
             "elements": elements,
@@ -1164,38 +1048,21 @@ def main_earnings():
     print(f"业绩日历推送 · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
 
-    week_dates, week_str = get_next_week_dates()
-    print(f"  目标周：{week_str}")
+    bj_now = datetime.now(timezone(timedelta(hours=8)))
+    if bj_now.month in SKIP_MONTHS:
+        print(f"  {bj_now.month}月为空窗期，跳过")
+        return
 
-    # 1. 登录 Earnings Whispers 并抓取美股
-    print("\n登录 Earnings Whispers...")
-    ew_session = ew_login() or SESSION
+    target_dates, week_str = get_next_two_weeks_dates()
+    print(f"  目标范围：{week_str}")
 
-    us_raw = []
-    print("抓取美股业绩日历...")
-    for d in week_dates:
-        us_raw.extend(ew_scrape_day(ew_session, d))
-        time.sleep(1.0)
-    print(f"共抓到 {len(us_raw)} 家原始数据")
+    print("\n查询美股白名单...")
+    us_cos = yf_fetch_earnings(US_WATCHLIST, target_dates)
 
-    us_cos = []
-    if us_raw:
-        print("筛选科技公司...")
-        us_cos = filter_companies(us_raw)
-        print(f"筛选后保留 {len(us_cos)} 家")
+    print("\n查询港韩股白名单...")
+    intl_cos = yf_fetch_intl_earnings(INTL_WATCHLIST, target_dates)
 
-    # 2. 港股 IR 检查（阿里 + 腾讯）
-    print("\n检查港股 IR...")
-    hk_cos = []
-    for hk in HK_WATCH:
-        print(f"  {hk['company']}...")
-        res = hk_check_ir(hk)
-        if res:
-            hk_cos.append(res)
-        time.sleep(1.0)
-
-    # 3. 构建并推送
-    payload = build_earnings_card(us_cos, hk_cos, week_str)
+    payload = build_earnings_card(us_cos, intl_cos, week_str)
     feishu_send(FEISHU_WEBHOOK_EARNINGS, payload, "业绩日历")
 
     print("\n完成！\n")
