@@ -689,6 +689,27 @@ def jinsa_find_pdf():
     return "", ""
 
 
+def jinsa_extract_pdf(url: str) -> str:
+    """直接下载 PDF 并用 pdfplumber 提取文本"""
+    try:
+        import pdfplumber, io
+        r = SESSION.get(url, timeout=30)
+        r.raise_for_status()
+        with pdfplumber.open(io.BytesIO(r.content)) as pdf:
+            pages = []
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    pages.append(t)
+        text = "\n".join(pages)
+        print(f"  PDF 提取成功，共 {len(text)} 字符")
+        return text
+    except Exception as e:
+        print(f"  PDF 提取失败: {e}")
+        return ""
+
+
+
 JINSA_PROMPT = """\
 从以下 JINSA 战报中提取所有涉及具体数字的信息，按分类整理，每条单独一行。
 格式：「分类 | 描述：数字」
@@ -789,8 +810,8 @@ def main_jinsa():
         print("  今日 PDF 已推送过，跳过")
         return
 
-    print("  Jina Reader 提取文本...")
-    text = jina_fetch(pdf_url)
+    print("  下载并解析 PDF...")
+    text = jinsa_extract_pdf(pdf_url)
     if not text:
         print("  文本提取失败，跳过")
         return
