@@ -20,7 +20,7 @@ jobs:
   # ── 1. 每日新闻日报（北京时间 08:00）──────────────────────────────────────
   scrape-and-push:
     if: >
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.mode == 'news' || github.event.inputs.mode == '')) ||
       github.event.schedule == '0 0 * * *'
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +45,7 @@ jobs:
   # ── 2. JINSA 战情推送（北京时间 23:30 和 01:00）──────────────────────────
   jinsa-push:
     if: >
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'jinsa') ||
       github.event.schedule == '30 15 * * *' ||
       github.event.schedule == '0 17 * * *'
     runs-on: ubuntu-latest
@@ -77,7 +78,9 @@ jobs:
 
   # ── 3. 每周业绩日历（北京时间周日 15:00）────────────────────────────────
   earnings-calendar:
-    if: github.event.schedule == '0 7 * * 0'
+    if: >
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'earnings') ||
+      github.event.schedule == '0 7 * * 0'
     runs-on: ubuntu-latest
     steps:
       - name: 📥 检出代码
