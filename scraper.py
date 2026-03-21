@@ -1010,13 +1010,26 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
             cap      = fmt_cap(co.get("market_cap", 0), co.get("currency", "USD"))
             sector   = co.get("sector", "") or co.get("freq", "")
 
-            line1 = f"**{name}** `{ticker}`{time_tag}"
+            # ticker 颜色：美股蓝，港股绿，韩股紫
+            ticker_color = "blue" if market == "美股" else "green" if market == "港股" else "purple"
+            ticker_colored = f"<font color='{ticker_color}'>{ticker}</font>"
+
+            # 第一行：公司名 ticker · 市场 · 市值 · 行业
             parts = [market]
             if cap:
                 parts.append(cap)
             if sector:
                 parts.append(sector)
-            line2 = " · ".join(parts)
+            meta = " · ".join(parts)
+            line1 = f"**{name}** {ticker_colored}  {meta}"
+
+            # 第二行：业绩发布日期
+            try:
+                date_display = datetime.strptime(dk, "%Y-%m-%d").strftime("%m月%d日")
+            except Exception:
+                date_display = dk
+            timing = f" {co['time']}" if co.get("time") else ""
+            line2 = f"业绩发布：{date_display}{timing}"
 
             elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line1}})
             elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line2}})
