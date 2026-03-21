@@ -636,12 +636,13 @@ def feishu_send(webhook: str, payload: dict, label: str = "") -> bool:
         print(f"⚠️  未设置 Webhook，跳过 {label}")
         return False
     try:
+        print(f"  {label} payload 预览: {json.dumps(payload, ensure_ascii=False)[:500]}")
         resp = SESSION.post(webhook, json=payload,
                             headers={"Content-Type": "application/json"}, timeout=15)
         data = resp.json()
         code = data.get("StatusCode", data.get("code", -1))
         ok = resp.status_code == 200 and code == 0
-        print(f"{'✅' if ok else '❌'} {label} {'推送成功' if ok else f'失败: {resp.text[:120]}'}")
+        print(f"{'✅' if ok else '❌'} {label} {'推送成功' if ok else f'失败: {resp.text[:300]}'}")
         return ok
     except Exception as e:
         print(f"❌ {label} 推送异常: {e}")
