@@ -844,9 +844,6 @@ def main_jinsa():
 
 WEEKDAY_ZH = {0: "周一", 1: "周二", 2: "周三", 3: "周四", 4: "周五"}
 
-# 空窗月（基本没有业绩）
-SKIP_MONTHS = {3, 6, 9, 12}
-
 # 美股白名单
 US_WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA", "AVGO", "ORCL",
@@ -1047,11 +1044,6 @@ def main_earnings():
     print(f"\n{'='*50}")
     print(f"业绩日历推送 · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"{'='*50}")
-
-    bj_now = datetime.now(timezone(timedelta(hours=8)))
-    if bj_now.month in SKIP_MONTHS:
-        print(f"  {bj_now.month}月为空窗期，跳过")
-        return
 
     target_dates, week_str = get_next_two_weeks_dates()
     print(f"  目标范围：{week_str}")
