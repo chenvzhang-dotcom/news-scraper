@@ -767,10 +767,11 @@ def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
             "tag":  "div",
             "text": {"tag": "lark_md", "content": f"**{emoji} {cat}**"},
         })
-        elements.append({
-            "tag":  "div",
-            "text": {"tag": "lark_md", "content": "\n".join(lines)},
-        })
+        for line in lines:
+            elements.append({
+                "tag":  "div",
+                "text": {"tag": "lark_md", "content": line},
+            })
         elements.append({"tag": "hr"})
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
