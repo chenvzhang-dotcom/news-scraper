@@ -1,0 +1,101 @@
+name: 📰 News Scraper
+
+on:
+  schedule:
+    - cron: '0 0 * * *'      # 北京时间 08:00 — 新闻日报
+    - cron: '30 15 * * *'    # 北京时间 23:30 — JINSA 第一次检查
+    - cron: '0 17 * * *'     # 北京时间 01:00 — JINSA 第二次检查
+    - cron: '0 7 * * 0'      # 北京时间 15:00 周日 — 业绩日历
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '运行模式 (news / jinsa / earnings)'
+        required: false
+        default: 'news'
+
+permissions:
+  contents: write
+
+jobs:
+  # ── 1. 每日新闻日报（北京时间 08:00）──────────────────────────────────────
+  scrape-and-push:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.schedule == '0 0 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 🐍 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 🚀 运行新闻抓取
+        env:
+          FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scraper.py news
+
+  # ── 2. JINSA 战情推送（北京时间 23:30 和 01:00）──────────────────────────
+  jinsa-push:
+    if: >
+      github.event.schedule == '30 15 * * *' ||
+      github.event.schedule == '0 17 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 🐍 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 📊 检查并推送 JINSA
+        env:
+          FEISHU_WEBHOOK:    ${{ secrets.FEISHU_WEBHOOK }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scraper.py jinsa
+
+      - name: 💾 保存推送状态
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jinsa-state
+          path: jinsa_sent.json
+          retention-days: 7
+
+  # ── 3. 每周业绩日历（北京时间周日 15:00）────────────────────────────────
+  earnings-calendar:
+    if: github.event.schedule == '0 7 * * 0'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 🐍 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖
+        run: pip install -r requirements.txt yfinance
+
+      - name: 📅 推送业绩日历
+        env:
+          FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
+          EARNINGSWHISPERS_EMAIL:    ${{ secrets.EARNINGSWHISPERS_EMAIL }}
+          EARNINGSWHISPERS_PASSWORD: ${{ secrets.EARNINGSWHISPERS_PASSWORD }}
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scraper.py earnings
