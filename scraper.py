@@ -878,6 +878,20 @@ def fmt_cap(v: int) -> str:
     return f"${v/1e6:.0f}M"
 
 
+def yf_quote_market_cap(ticker: str) -> int:
+    """用 Yahoo Finance quote API 获取实时市值，失败返回 0"""
+    try:
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+        r = requests.get(url, params={"interval": "1d", "range": "1d"},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code != 200:
+            return 0
+        meta = r.json().get("chart", {}).get("result", [{}])[0].get("meta", {})
+        return int(meta.get("marketCap", 0) or 0)
+    except Exception:
+        return 0
+
+
 def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
     """批量查美股白名单，筛出 target_dates 范围内有业绩的公司"""
     import yfinance as yf
@@ -900,10 +914,14 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
                 d_str = str(d)[:10]
                 if d_str not in target_dates:
                     continue
-                info       = t.info
-                market_cap = info.get("marketCap", 0) or 0
-                sector     = info.get("sector", "")
-                name       = info.get("shortName", ticker)
+                # 市值用 Yahoo Finance quote API 实时拉
+                market_cap = yf_quote_market_cap(ticker)
+                try:
+                    info   = t.fast_info
+                    sector = getattr(info, "sector", "") or ""
+                    name   = getattr(info, "shortName", ticker) or ticker
+                except Exception:
+                    sector, name = "", ticker
                 results.append({
                     "ticker":     ticker,
                     "company":    name,
@@ -923,7 +941,12 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
 
 
 def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
-    """查港股/韩股白名单，ticker 为待确认的跳过"""
+    """
+    查港股/韩股白名单。
+    - ticker 为待确认的跳过
+    - 找不到日期或日期不在窗口内的，直接不显示（不列"待确认"）
+    - 市值用 Yahoo Finance quote API 实时拉
+    """
     import yfinance as yf
     results = []
     valid = [w for w in watchlist if w["ticker"] != "待确认"]
@@ -936,28 +959,29 @@ def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
         try:
             t = yf_tickers.tickers.get(w["ticker"])
             if not t:
-                results.append(dict(w, date="待确认", confirmed=False, time=""))
                 continue
             cal = t.calendar
             if not cal or "Earnings Date" not in cal:
-                results.append(dict(w, date="待确认", confirmed=False, time=""))
                 continue
             dates = cal["Earnings Date"]
             if not isinstance(dates, list):
                 dates = [dates]
-            matched = False
             for d in dates:
                 d_str = str(d)[:10]
                 if d_str in target_dates:
-                    results.append(dict(w, date=d_str, confirmed=True, time=""))
-                    matched = True
+                    market_cap = yf_quote_market_cap(w["ticker"])
+                    results.append(dict(w,
+                        date=d_str,
+                        confirmed=True,
+                        time="",
+                        market_cap=market_cap,
+                    ))
                     break
-            if not matched:
-                results.append(dict(w, date="待确认", confirmed=False, time=""))
+            # 找不到匹配日期：直接跳过，不列出
         except Exception:
-            results.append(dict(w, date="待确认", confirmed=False, time=""))
+            continue
 
-    print(f"  港韩股处理 {len(results)} 家")
+    print(f"  港韩股找到 {len(results)} 家（有确认日期）")
     return results
 
 
@@ -1007,9 +1031,10 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
                 badges += " `待确认`"
             cap    = fmt_cap(co.get("market_cap", 0))
             sector = co.get("sector", co.get("freq", ""))
+            line1  = f"**{name}** `{ticker}`{badges}"
             line2  = f"{market} · {cap} · {sector}" if cap != "$0" else f"{market} · {co.get('freq', '')}"
-            content = f"**{name}** `{ticker}`{badges}\n{line2}"
-            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": content}})
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line1}})
+            elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line2}})
 
         elements.append({"tag": "hr"})
 
