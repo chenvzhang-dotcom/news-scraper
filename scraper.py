@@ -870,12 +870,18 @@ INTL_WATCHLIST = [
 ]
 
 
-def fmt_cap(v: int) -> str:
+CURRENCY_SYMBOL = {"HKD": "HK$", "KRW": "₩", "USD": "$"}
+
+def fmt_cap(v: int, currency: str = "USD") -> str:
+    """按原始货币显示市值，加正确货币符号"""
+    sym = CURRENCY_SYMBOL.get(currency, "$")
     if v >= 1_000_000_000_000:
-        return f"${v/1e12:.1f}T"
+        return f"{sym}{v/1e12:.1f}T"
     if v >= 1_000_000_000:
-        return f"${v/1e9:.0f}B"
-    return f"${v/1e6:.0f}M"
+        return f"{sym}{v/1e9:.0f}B"
+    if v > 0:
+        return f"{sym}{v/1e6:.0f}M"
+    return ""
 
 
 def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
@@ -902,6 +908,7 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
                     continue
                 info       = t.info
                 market_cap = info.get("marketCap", 0) or 0
+                currency   = info.get("currency", "USD") or "USD"
                 sector     = info.get("sector", "") or ""
                 name       = info.get("shortName", ticker) or ticker
                 results.append({
@@ -910,6 +917,7 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
                     "date":       d_str,
                     "time":       "",
                     "market_cap": market_cap,
+                    "currency":   currency,
                     "sector":     sector,
                     "market":     "美股",
                     "confirmed":  True,
@@ -946,11 +954,13 @@ def yf_fetch_intl_earnings(watchlist: list, target_dates: set) -> list:
                 if d_str in target_dates:
                     info       = t.info
                     market_cap = info.get("marketCap", 0) or 0
+                    currency   = info.get("currency", "USD") or "USD"
                     results.append(dict(w,
                         date=d_str,
                         confirmed=True,
                         time="",
                         market_cap=market_cap,
+                        currency=currency,
                     ))
                     break
         except Exception:
@@ -976,38 +986,38 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
     all_cos = us_cos + intl_cos
     elements = []
 
+    # 按日期分组，只保留有确认日期的
     by_date = {}
     for co in all_cos:
-        by_date.setdefault(co.get("date", "待确认"), []).append(co)
+        dk = co.get("date", "")
+        if dk:
+            by_date.setdefault(dk, []).append(co)
 
-    confirmed = sorted(k for k in by_date if k != "待确认")
-    pending   = ["待确认"] if "待确认" in by_date else []
-
-    for dk in confirmed + pending:
-        if dk != "待确认":
-            try:
-                d     = datetime.strptime(dk, "%Y-%m-%d")
-                label = f"**{WEEKDAY_ZH.get(d.weekday(), '')} · {d.strftime('%m月%d日')}**"
-            except Exception:
-                label = f"**{dk}**"
-        else:
-            label = "**日期待确认**"
+    for dk in sorted(by_date):
+        try:
+            d     = datetime.strptime(dk, "%Y-%m-%d")
+            label = f"**{WEEKDAY_ZH.get(d.weekday(), '')} · {d.strftime('%m月%d日')}**"
+        except Exception:
+            label = f"**{dk}**"
 
         elements.append({"tag": "div", "text": {"tag": "lark_md", "content": label}})
 
         for co in by_date[dk]:
-            ticker  = co["ticker"]
-            name    = co.get("company", ticker)
-            market  = co.get("market", "美股")
-            badges  = ""
-            if co.get("time"):
-                badges += f" `{co['time']}`"
-            if not co.get("confirmed", True):
-                badges += " `待确认`"
-            cap    = fmt_cap(co.get("market_cap", 0))
-            sector = co.get("sector", co.get("freq", ""))
-            line1  = f"**{name}** `{ticker}`{badges}"
-            line2  = f"{market} · {cap} · {sector}" if cap != "$0" else f"{market} · {co.get('freq', '')}"
+            ticker   = co["ticker"]
+            name     = co.get("company", ticker)
+            market   = co.get("market", "美股")
+            time_tag = f" `{co['time']}`" if co.get("time") else ""
+            cap      = fmt_cap(co.get("market_cap", 0), co.get("currency", "USD"))
+            sector   = co.get("sector", "") or co.get("freq", "")
+
+            line1 = f"**{name}** `{ticker}`{time_tag}"
+            parts = [market]
+            if cap:
+                parts.append(cap)
+            if sector:
+                parts.append(sector)
+            line2 = " · ".join(parts)
+
             elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line1}})
             elements.append({"tag": "div", "text": {"tag": "lark_md", "content": line2}})
 
@@ -1021,11 +1031,7 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
                           "content": "未来两周内无业绩发布。"}})
 
     elements.append({"tag": "note", "elements": [{"tag": "plain_text",
-        "content": "  ".join(filter(None, [
-            "BMO=盘前 · AMC=盘后",
-            f"更新于 {bj}",
-            "来源：yfinance / Yahoo Finance",
-        ]))}]})
+        "content": f"BMO=盘前 · AMC=盘后  更新于 {bj}  来源：yfinance / Yahoo Finance"}]})
 
     return {
         "msg_type": "interactive",
