@@ -627,17 +627,6 @@ def main():
     print("完成！\n")
 
 
-if __name__ == "__main__":
-    import sys
-    mode = sys.argv[1] if len(sys.argv) > 1 else "news"
-    if mode == "jinsa":
-        main_jinsa()
-    elif mode == "earnings":
-        main_earnings()
-    else:
-        main()
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 通用飞书发送（支持指定 Webhook）
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1178,3 +1167,18 @@ def main_earnings():
     feishu_send(FEISHU_WEBHOOK_EARNINGS, payload, "业绩日历")
 
     print("\n完成！\n")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 入口
+# ══════════════════════════════════════════════════════════════════════════════
+
+if __name__ == "__main__":
+    import sys
+    mode = sys.argv[1] if len(sys.argv) > 1 else "news"
+    if mode == "jinsa":
+        main_jinsa()
+    elif mode == "earnings":
+        main_earnings()
+    else:
+        main()
