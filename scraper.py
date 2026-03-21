@@ -762,22 +762,33 @@ def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
     for cat, (emoji, lines) in cats.items():
         if not lines:
             continue
-        elements.append({"tag": "div",
-                          "text": {"tag": "lark_md", "content": f"**{emoji} {cat}**"}})
-        elements.append({"tag": "div",
-                          "text": {"tag": "lark_md", "content": "\n".join(lines)}})
+        elements.append({
+            "tag":  "div",
+            "text": {"tag": "lark_md", "content": f"**{emoji} {cat}**"},
+        })
+        elements.append({
+            "tag":  "div",
+            "text": {"tag": "lark_md", "content": "\n".join(lines)},
+        })
         elements.append({"tag": "hr"})
     if elements and elements[-1].get("tag") == "hr":
         elements.pop()
+
+    if not elements:
+        elements.append({
+            "tag":  "div",
+            "text": {"tag": "lark_md", "content": "（本次未提取到数字内容）"},
+        })
 
     elements.append({
         "tag":  "div",
         "text": {"tag": "lark_md", "content": f"[查看原文 PDF]({pdf_url})"},
     })
-    elements.append({"tag": "note", "elements": [
-        {"tag": "plain_text",
-         "content": f"JINSA · {date_str} · 北京时间 {bj}"}
-    ]})
+    elements.append({
+        "tag":      "note",
+        "elements": [{"tag": "plain_text",
+                      "content": f"JINSA · {date_str} · 北京时间 {bj}"}],
+    })
 
     return {
         "msg_type": "interactive",
@@ -785,7 +796,7 @@ def jinsa_build_card(numbers: str, pdf_url: str, date_str: str) -> dict:
             "header": {
                 "title":    {"tag": "plain_text",
                              "content": f"📊 JINSA 战情数字 · {date_str}"},
-                "template": "blue",
+                "template": "wathet",
             },
             "elements": elements,
         },
