@@ -373,6 +373,154 @@ def fetch_wsj():
     return from_rss("https://feeds.a.dj.com/rss/RSSWorldNews.xml", "WSJ", "🗞️")
 
 
+# ─── AI 公司官网新闻源 ─────────────────────────────────────────────────────────
+
+def _scrape_blog(url: str, source: str, emoji: str,
+                 must_contain: str = "", path_filter: str = "") -> list:
+    """
+    通用博客页面爬取：
+    1. Jina Reader 获取页面（处理 JS 渲染）
+    2. 解析 markdown 超链接，过滤到同域 blog/news 子路径
+    3. 降级：BeautifulSoup
+    """
+    from urllib.parse import urlparse
+    parsed  = urlparse(url)
+    origin  = f"{parsed.scheme}://{parsed.netloc}"
+    base_filter = must_contain or path_filter or parsed.path.rstrip("/")
+
+    items, seen = [], set()
+
+    # ── Jina 优先 ──
+    content = jina_fetch(url)
+    if content:
+        for title, link in re.findall(
+            r'\[([^\]]{5,120})\]\((https?://[^\)\s]+)\)', content
+        ):
+            if base_filter and base_filter not in link:
+                continue
+            link = link.rstrip(")")
+            if link in seen or link == url:
+                continue
+            seen.add(link)
+            items.append(make_item(source, emoji, title.strip(), link))
+            if len(items) >= FETCH_LIMIT:
+                break
+
+    # ── 降级：BeautifulSoup ──
+    if not items:
+        r = http_get(url)
+        if r:
+            soup = BeautifulSoup(r.text, "lxml")
+            for a in soup.find_all("a", href=True):
+                href = a["href"]
+                if not href.startswith("http"):
+                    href = origin + href
+                if base_filter and base_filter not in href:
+                    continue
+                if href in seen or href == url:
+                    continue
+                title = a.get_text(strip=True)
+                if len(title) < 8:
+                    continue
+                seen.add(href)
+                items.append(make_item(source, emoji, title, href))
+                if len(items) >= FETCH_LIMIT:
+                    break
+
+    print(f"  [{source}] {len(items)} 条")
+    return items
+
+
+# ── 第一批：有官方 RSS ──────────────────────────────────────────────────────────
+
+def fetch_openai_blog():
+    return from_rss("https://openai.com/news/rss.xml", "OpenAI", "🤖")
+
+def fetch_deepmind_blog():
+    results = from_rss("https://deepmind.google/blog/rss.xml", "DeepMind", "🧠")
+    if not results:
+        results = _scrape_blog(
+            "https://deepmind.google/discover/blog",
+            "DeepMind", "🧠", must_contain="deepmind.google"
+        )
+    return results
+
+def fetch_huggingface_blog():
+    return from_rss("https://huggingface.co/blog/feed.xml", "HuggingFace", "🤗")
+
+def fetch_github_changelog():
+    results = from_rss("https://github.blog/changelog/feed/", "GitHub Changelog", "🐙")
+    if not results:
+        results = from_rss("https://github.blog/feed/", "GitHub Changelog", "🐙")
+    return results
+
+def fetch_aws_ml_blog():
+    return from_rss("https://aws.amazon.com/blogs/machine-learning/feed", "AWS ML", "☁️")
+
+def fetch_langchain_blog():
+    results = from_rss("https://blog.langchain.dev/rss/", "LangChain", "⛓️")
+    if not results:
+        results = from_rss("https://blog.langchain.dev/feed/", "LangChain", "⛓️")
+    return results
+
+def fetch_meta_ai_blog():
+    results = from_rss("https://ai.meta.com/blog/rss/", "Meta AI", "🌐")
+    if not results:
+        results = _scrape_blog(
+            "https://ai.meta.com/blog/",
+            "Meta AI", "🌐", must_contain="ai.meta.com/blog"
+        )
+    return results
+
+def fetch_microsoft_ai_blog():
+    results = from_rss("https://blogs.microsoft.com/ai/feed/", "Microsoft AI", "🪟")
+    if not results:
+        results = _scrape_blog(
+            "https://blogs.microsoft.com/ai/",
+            "Microsoft AI", "🪟", must_contain="blogs.microsoft.com/ai"
+        )
+    return results
+
+def fetch_replit_blog():
+    results = from_rss("https://blog.replit.com/rss", "Replit", "💻")
+    if not results:
+        results = from_rss("https://blog.replit.com/feed", "Replit", "💻")
+    return results
+
+
+# ── 第二批：无 RSS，爬取页面 ───────────────────────────────────────────────────
+
+def fetch_anthropic_news():
+    return _scrape_blog(
+        "https://www.anthropic.com/news",
+        "Anthropic", "🧬", must_contain="anthropic.com/news/"
+    )
+
+def fetch_xai_blog():
+    return _scrape_blog(
+        "https://x.ai/blog",
+        "xAI", "⚡", must_contain="x.ai/blog/"
+    )
+
+def fetch_mistral_news():
+    results = _scrape_blog(
+        "https://mistral.ai/news/",
+        "Mistral AI", "💫", must_contain="mistral.ai/news/"
+    )
+    if not results:
+        results = _scrape_blog(
+            "https://mistral.ai/news/",
+            "Mistral AI", "💫", must_contain="mistral.ai"
+        )
+    return results
+
+def fetch_cursor_blog():
+    return _scrape_blog(
+        "https://www.cursor.com/blog",
+        "Cursor", "🖱️", must_contain="cursor.com/blog/"
+    )
+
+
 # ─── Claude AI 处理 ────────────────────────────────────────────────────────────
 
 CLAUDE_PROMPT = """\
@@ -580,6 +728,21 @@ FETCHERS = [
     ("华尔街见闻",   fetch_wallstreetcn),
     ("Bloomberg",    fetch_bloomberg),
     ("WSJ",          fetch_wsj),
+    # ── AI 公司官网（第一批：RSS）─────────────────────────────────────────────
+    ("OpenAI",           fetch_openai_blog),
+    ("DeepMind",         fetch_deepmind_blog),
+    ("HuggingFace",      fetch_huggingface_blog),
+    ("GitHub Changelog", fetch_github_changelog),
+    ("AWS ML",           fetch_aws_ml_blog),
+    ("LangChain",        fetch_langchain_blog),
+    ("Meta AI",          fetch_meta_ai_blog),
+    ("Microsoft AI",     fetch_microsoft_ai_blog),
+    ("Replit",           fetch_replit_blog),
+    # ── AI 公司官网（第二批：爬页面）──────────────────────────────────────────
+    ("Anthropic",        fetch_anthropic_news),
+    ("xAI",              fetch_xai_blog),
+    ("Mistral AI",       fetch_mistral_news),
+    ("Cursor",           fetch_cursor_blog),
 ]
 
 # ─── 主流程 ────────────────────────────────────────────────────────────────────
