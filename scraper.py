@@ -396,6 +396,7 @@ def _scrape_blog(url: str, source: str, emoji: str,
         for title, link in re.findall(
             r'\[([^\]]{5,120})\]\((https?://[^\)\s]+)\)', content
         ):
+            link = re.sub(r'\s+', '', link)  # 清理换行符和空白
             if base_filter and base_filter not in link:
                 continue
             link = link.rstrip(")")
@@ -613,7 +614,7 @@ def process_with_claude(items: list) -> list:
 
             print(f"  Claude 批次 {batch_num}/{total_batches}：{len(batch)} 条 → 保留 {kept} 条")
             if batch_num < total_batches:
-                time.sleep(1.5)
+                time.sleep(8)
 
         except Exception as e:
             print(f"  Claude 批次 {batch_num} 失败: {e}，保留原始内容")
