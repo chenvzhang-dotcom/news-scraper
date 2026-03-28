@@ -377,30 +377,30 @@ def fetch_wsj():
 # ─── AI 公司官网新闻源 ─────────────────────────────────────────────────────────
 
 def _scrape_blog(url: str, source: str, emoji: str,
-                 must_contain: str = "", path_filter: str = "") -> list:
+                 must_contain: str = "") -> list:
     """
     通用博客页面爬取：
     1. Jina Reader 获取页面（处理 JS 渲染）
-    2. 解析 markdown 超链接，过滤到同域 blog/news 子路径
-    3. 降级：BeautifulSoup
+    2. 解析 markdown 超链接，按 must_contain 过滤（只匹配域名/路径前缀）
+    3. 降级：BeautifulSoup 直接解析
     """
     from urllib.parse import urlparse
-    parsed  = urlparse(url)
-    origin  = f"{parsed.scheme}://{parsed.netloc}"
-    base_filter = must_contain or path_filter or parsed.path.rstrip("/")
+    parsed = urlparse(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
 
     items, seen = [], set()
 
-    # ── Jina 优先 ──
+    # ── 第一步：Jina Reader ──
     content = jina_fetch(url)
-    if content:
-        for title, link in re.findall(
-            r'\[([^\]]{5,120})\]\((https?://[^\)\s]+)\)', content
-        ):
-            link = re.sub(r'\s+', '', link)  # 清理换行符和空白
-            if base_filter and base_filter not in link:
+    if not content:
+        print(f"  [{source}] Jina 返回空，尝试 BeautifulSoup 降级")
+    else:
+        all_links = re.findall(r'\[([^\]]{5,120})\]\((https?://[^\)\s\"\']+)\)', content)
+        print(f"  [{source}] Jina 找到 {len(all_links)} 个链接，过滤条件: '{must_contain}'")
+        for title, link in all_links:
+            link = re.sub(r'\s+', '', link).rstrip(")")
+            if must_contain and must_contain not in link:
                 continue
-            link = link.rstrip(")")
             if link in seen or link == url:
                 continue
             seen.add(link)
@@ -408,16 +408,20 @@ def _scrape_blog(url: str, source: str, emoji: str,
             if len(items) >= FETCH_LIMIT:
                 break
 
-    # ── 降级：BeautifulSoup ──
+    # ── 第二步：BeautifulSoup 降级 ──
     if not items:
         r = http_get(url)
-        if r:
+        if not r:
+            print(f"  [{source}] BeautifulSoup 降级也失败（HTTP 错误）")
+        else:
             soup = BeautifulSoup(r.text, "lxml")
-            for a in soup.find_all("a", href=True):
+            all_as = soup.find_all("a", href=True)
+            print(f"  [{source}] BeautifulSoup 找到 {len(all_as)} 个 <a> 标签，过滤条件: '{must_contain}'")
+            for a in all_as:
                 href = a["href"]
                 if not href.startswith("http"):
                     href = origin + href
-                if base_filter and base_filter not in href:
+                if must_contain and must_contain not in href:
                     continue
                 if href in seen or href == url:
                     continue
@@ -429,7 +433,7 @@ def _scrape_blog(url: str, source: str, emoji: str,
                 if len(items) >= FETCH_LIMIT:
                     break
 
-    print(f"  [{source}] {len(items)} 条")
+    print(f"  [{source}] 最终 {len(items)} 条")
     return items
 
 
@@ -453,11 +457,9 @@ def fetch_huggingface_blog():
 def fetch_github_changelog():
     results = from_rss("https://github.blog/changelog/feed/", "GitHub Changelog", "🐙")
     if not results:
-        results = from_rss("https://github.blog/feed/", "GitHub Changelog", "🐙")
-    if not results:
         results = _scrape_blog(
             "https://github.blog/changelog/",
-            "GitHub Changelog", "🐙", must_contain="github.blog/changelog"
+            "GitHub Changelog", "🐙", must_contain="github.blog"
         )
     return results
 
@@ -470,6 +472,8 @@ def fetch_aws_ml_blog():
 def fetch_langchain_blog():
     results = from_rss("https://blog.langchain.dev/rss/", "LangChain", "⛓️")
     if not results:
+        results = from_rss("https://blog.langchain.dev/feed/", "LangChain", "⛓️")
+    if not results:
         results = _scrape_blog(
             "https://blog.langchain.dev/",
             "LangChain", "⛓️", must_contain="blog.langchain.dev"
@@ -477,7 +481,6 @@ def fetch_langchain_blog():
     return results
 
 def fetch_meta_ai_blog():
-    # Meta AI 页面屏蔽直接请求，改用 Jina 绕过
     results = _scrape_blog(
         "https://ai.meta.com/blog/",
         "Meta AI", "🌐", must_contain="ai.meta.com/blog"
@@ -496,6 +499,8 @@ def fetch_microsoft_ai_blog():
 def fetch_replit_blog():
     results = from_rss("https://blog.replit.com/rss", "Replit", "💻")
     if not results:
+        results = from_rss("https://blog.replit.com/feed", "Replit", "💻")
+    if not results:
         results = _scrape_blog(
             "https://blog.replit.com/",
             "Replit", "💻", must_contain="blog.replit.com"
@@ -508,31 +513,42 @@ def fetch_replit_blog():
 def fetch_anthropic_news():
     return _scrape_blog(
         "https://www.anthropic.com/news",
-        "Anthropic", "🧬", must_contain="anthropic.com/news/"
+        "Anthropic", "🧬", must_contain="anthropic.com/news"
     )
 
 def fetch_xai_blog():
-    return _scrape_blog(
-        "https://x.ai/blog",
-        "xAI", "⚡", must_contain="x.ai/blog/"
-    )
+    # x.ai 直接请求 403，改用 Jina 抓取
+    content = jina_fetch("https://x.ai/blog")
+    if not content:
+        print("  [xAI] Jina 返回空")
+        return []
+    items, seen = [], set()
+    all_links = re.findall(r'\[([^\]]{5,120})\]\((https?://[^\)\s\"\']+)\)', content)
+    print(f"  [xAI] Jina 找到 {len(all_links)} 个链接")
+    for title, link in all_links:
+        link = re.sub(r'\s+', '', link).rstrip(")")
+        if "x.ai/blog" not in link:
+            continue
+        if link in seen:
+            continue
+        seen.add(link)
+        items.append(make_item("xAI", "⚡", title.strip(), link))
+        if len(items) >= FETCH_LIMIT:
+            break
+    print(f"  [xAI] 最终 {len(items)} 条")
+    return items
 
 def fetch_mistral_news():
     results = _scrape_blog(
         "https://mistral.ai/news/",
-        "Mistral AI", "💫", must_contain="mistral.ai/news/"
+        "Mistral AI", "💫", must_contain="mistral.ai"
     )
-    if not results:
-        results = _scrape_blog(
-            "https://mistral.ai/news/",
-            "Mistral AI", "💫", must_contain="mistral.ai"
-        )
     return results
 
 def fetch_cursor_blog():
     return _scrape_blog(
         "https://www.cursor.com/blog",
-        "Cursor", "🖱️", must_contain="cursor.com/blog/"
+        "Cursor", "🖱️", must_contain="cursor.com/blog"
     )
 
 
