@@ -33,8 +33,8 @@ JINSA_STATE_FILE = "jinsa_sent.json"
 MAX_TOTAL         = 20      # 最终推送总条数上限
 MAX_PER_SOURCE    = 5       # 单个来源最多推送条数
 FETCH_LIMIT       = 10      # 每来源最多抓取条数
-CLAUDE_BATCH      = 15      # Claude 每批处理条数
-MAX_CONTENT_CHARS = 3000    # 传给 Claude 的正文最大字符数
+CLAUDE_BATCH      = 8       # Claude 每批处理条数
+MAX_CONTENT_CHARS = 1500    # 传给 Claude 的正文最大字符数
 JINA_TIMEOUT      = 25      # Jina Reader 超时秒数
 HTTP_TIMEOUT      = 12      # 普通请求超时秒数
 HOURS_LOOKBACK    = 24      # 只看过去多少小时的新闻
@@ -97,6 +97,7 @@ def http_get(url: str, timeout: int = HTTP_TIMEOUT):
 
 def make_item(source: str, emoji: str, title: str, link: str,
               content: str = "", rss_summary: str = "") -> dict:
+    link = re.sub(r'\s+', '', link.strip())  # 清除 URL 中的换行/空格
     return {
         "id":          make_id(link),
         "source":      source,
@@ -105,7 +106,7 @@ def make_item(source: str, emoji: str, title: str, link: str,
         "content":     content,
         "rss_summary": rss_summary,
         "summary":     "",
-        "link":        link.strip(),
+        "link":        link,
         "importance":  1,
     }
 
@@ -453,24 +454,34 @@ def fetch_github_changelog():
     results = from_rss("https://github.blog/changelog/feed/", "GitHub Changelog", "🐙")
     if not results:
         results = from_rss("https://github.blog/feed/", "GitHub Changelog", "🐙")
+    if not results:
+        results = _scrape_blog(
+            "https://github.blog/changelog/",
+            "GitHub Changelog", "🐙", must_contain="github.blog/changelog"
+        )
     return results
 
 def fetch_aws_ml_blog():
-    return from_rss("https://aws.amazon.com/blogs/machine-learning/feed", "AWS ML", "☁️")
+    results = from_rss("https://aws.amazon.com/blogs/machine-learning/feed/", "AWS ML", "☁️")
+    if not results:
+        results = from_rss("https://aws.amazon.com/blogs/machine-learning/feed", "AWS ML", "☁️")
+    return results
 
 def fetch_langchain_blog():
     results = from_rss("https://blog.langchain.dev/rss/", "LangChain", "⛓️")
     if not results:
-        results = from_rss("https://blog.langchain.dev/feed/", "LangChain", "⛓️")
+        results = _scrape_blog(
+            "https://blog.langchain.dev/",
+            "LangChain", "⛓️", must_contain="blog.langchain.dev"
+        )
     return results
 
 def fetch_meta_ai_blog():
-    results = from_rss("https://ai.meta.com/blog/rss/", "Meta AI", "🌐")
-    if not results:
-        results = _scrape_blog(
-            "https://ai.meta.com/blog/",
-            "Meta AI", "🌐", must_contain="ai.meta.com/blog"
-        )
+    # Meta AI 页面屏蔽直接请求，改用 Jina 绕过
+    results = _scrape_blog(
+        "https://ai.meta.com/blog/",
+        "Meta AI", "🌐", must_contain="ai.meta.com/blog"
+    )
     return results
 
 def fetch_microsoft_ai_blog():
@@ -485,7 +496,10 @@ def fetch_microsoft_ai_blog():
 def fetch_replit_blog():
     results = from_rss("https://blog.replit.com/rss", "Replit", "💻")
     if not results:
-        results = from_rss("https://blog.replit.com/feed", "Replit", "💻")
+        results = _scrape_blog(
+            "https://blog.replit.com/",
+            "Replit", "💻", must_contain="blog.replit.com"
+        )
     return results
 
 
@@ -614,7 +628,7 @@ def process_with_claude(items: list) -> list:
 
             print(f"  Claude 批次 {batch_num}/{total_batches}：{len(batch)} 条 → 保留 {kept} 条")
             if batch_num < total_batches:
-                time.sleep(8)
+                time.sleep(20)
 
         except Exception as e:
             print(f"  Claude 批次 {batch_num} 失败: {e}，保留原始内容")
