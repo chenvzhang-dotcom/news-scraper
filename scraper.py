@@ -383,25 +383,96 @@ def fetch_wsj():
 
 # ─── AI 公司官网新闻源 ─────────────────────────────────────────────────────────
 
+def _extract_pub_date(url: str):
+    """
+    从文章页面提取发布时间，返回 datetime 或 None。
+    优先级：
+    1. <meta property="article:published_time">
+    2. <time datetime="...">
+    3. JSON-LD datePublished
+    """
+    r = http_get(url)
+    if not r:
+        return None
+    soup = BeautifulSoup(r.text, "lxml")
+
+    # 1. Open Graph meta
+    meta = soup.find("meta", property="article:published_time")
+    if meta and meta.get("content"):
+        try:
+            from dateutil import parser as dateparser
+            return dateparser.parse(meta["content"])
+        except Exception:
+            pass
+
+    # 2. <time datetime="">
+    time_tag = soup.find("time", attrs={"datetime": True})
+    if time_tag:
+        try:
+            from dateutil import parser as dateparser
+            return dateparser.parse(time_tag["datetime"])
+        except Exception:
+            pass
+
+    # 3. JSON-LD
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+            if isinstance(data, list):
+                data = data[0]
+            pub = data.get("datePublished") or data.get("dateCreated")
+            if pub:
+                from dateutil import parser as dateparser
+                return dateparser.parse(pub)
+        except Exception:
+            pass
+
+    return None
+
+
 def _scrape_blog(url: str, source: str, emoji: str,
                  must_contain: str = "", ai_source: bool = False) -> list:
     """
     通用博客页面爬取：
-    1. Jina Reader 获取页面（处理 JS 渲染）
-    2. 解析 markdown 超链接，按 must_contain 过滤
-    3. 降级：BeautifulSoup 直接解析
+    1. Jina Reader 获取页面，解析文章链接列表
+    2. 逐篇进入文章页面提取发布时间
+    3. 24小时内 → 保留；超过24小时 → 停止（假设列表按时间倒序）
+    4. 降级：BeautifulSoup 直接解析链接
     """
     from urllib.parse import urlparse
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     _make = make_ai_item if ai_source else make_item
 
-    items, seen = [], set()
+    # ── 第一步：拿链接列表 ──
+    candidates = []
+    seen_links = set()
 
-    # ── 第一步：Jina Reader ──
     content = jina_fetch(url)
     if not content:
         print(f"  [{source}] Jina 返回空，尝试 BeautifulSoup 降级")
+        r = http_get(url)
+        if not r:
+            print(f"  [{source}] BeautifulSoup 降级也失败（HTTP 错误）")
+            return []
+        soup = BeautifulSoup(r.text, "lxml")
+        all_as = soup.find_all("a", href=True)
+        print(f"  [{source}] BeautifulSoup 找到 {len(all_as)} 个 <a> 标签")
+        for a in all_as:
+            href = a["href"]
+            if not href.startswith("http"):
+                href = origin + href
+            if must_contain and must_contain not in href:
+                continue
+            if href in seen_links or href == url:
+                continue
+            title = a.get_text(strip=True)
+            if len(title) < 8:
+                continue
+            seen_links.add(href)
+            candidates.append((title, href))
+            if len(candidates) >= FETCH_LIMIT * 2:
+                break
     else:
         all_links = re.findall(r'\[([^\]]{5,120})\]\((https?://[^\)\s\"\']+)\)', content)
         print(f"  [{source}] Jina 找到 {len(all_links)} 个链接，过滤条件: '{must_contain}'")
@@ -409,37 +480,32 @@ def _scrape_blog(url: str, source: str, emoji: str,
             link = re.sub(r'\s+', '', link).rstrip(")")
             if must_contain and must_contain not in link:
                 continue
-            if link in seen or link == url:
+            if link in seen_links or link == url:
                 continue
-            seen.add(link)
-            items.append(_make(source, emoji, title.strip(), link))
-            if len(items) >= FETCH_LIMIT:
+            seen_links.add(link)
+            candidates.append((title, link))
+            if len(candidates) >= FETCH_LIMIT * 2:
                 break
 
-    # ── 第二步：BeautifulSoup 降级 ──
-    if not items:
-        r = http_get(url)
-        if not r:
-            print(f"  [{source}] BeautifulSoup 降级也失败（HTTP 错误）")
+    print(f"  [{source}] 过滤后候选链接 {len(candidates)} 个，开始逐篇检查发布时间...")
+
+    # ── 第二步：逐篇检查发布时间 ──
+    items = []
+    for title, link in candidates:
+        pub_date = _extract_pub_date(link)
+        if pub_date is None:
+            # 拿不到时间就保留（宁可多推）
+            print(f"    无法获取日期，保留: {link[:60]}")
+            items.append(_make(source, emoji, title, link))
+        elif is_within_24h(pub_date):
+            print(f"    ✅ 24h内: {link[:60]}")
+            items.append(_make(source, emoji, title, link))
         else:
-            soup = BeautifulSoup(r.text, "lxml")
-            all_as = soup.find_all("a", href=True)
-            print(f"  [{source}] BeautifulSoup 找到 {len(all_as)} 个 <a> 标签，过滤条件: '{must_contain}'")
-            for a in all_as:
-                href = a["href"]
-                if not href.startswith("http"):
-                    href = origin + href
-                if must_contain and must_contain not in href:
-                    continue
-                if href in seen or href == url:
-                    continue
-                title = a.get_text(strip=True)
-                if len(title) < 8:
-                    continue
-                seen.add(href)
-                items.append(_make(source, emoji, title, href))
-                if len(items) >= FETCH_LIMIT:
-                    break
+            print(f"    ⏹ 超过24h，停止: {link[:60]}")
+            break  # 假设列表按时间倒序，后面的更旧
+        time.sleep(0.5)
+        if len(items) >= FETCH_LIMIT:
+            break
 
     print(f"  [{source}] 最终 {len(items)} 条")
     return items
