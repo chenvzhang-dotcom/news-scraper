@@ -454,8 +454,8 @@ def fetch_deepmind_blog():
     results = from_rss("https://deepmind.google/blog/rss.xml", "DeepMind", "🧠")
     if not results:
         results = _scrape_blog(
-            "https://deepmind.google/discover/blog",
-            "DeepMind", "🧠", must_contain="deepmind.google", ai_source=True
+            "https://deepmind.google/blog/",
+            "DeepMind", "🧠", must_contain="deepmind.google/blog/", ai_source=True
         )
     return results
 
