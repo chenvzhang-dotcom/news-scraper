@@ -30,7 +30,7 @@ API_NINJAS_KEY             = os.environ.get("API_NINJAS_KEY", "")
 
 JINSA_STATE_FILE = "jinsa_sent.json"
 
-MAX_TOTAL         = 20      # 最终推送总条数上限
+MAX_TOTAL         = 30      # 最终推送总条数上限
 MAX_PER_SOURCE    = 5       # 单个来源最多推送条数
 FETCH_LIMIT       = 10      # 每来源最多抓取条数
 CLAUDE_BATCH      = 8       # Claude 每批处理条数
@@ -109,6 +109,13 @@ def make_item(source: str, emoji: str, title: str, link: str,
         "link":        link,
         "importance":  1,
     }
+
+def make_ai_item(source: str, emoji: str, title: str, link: str,
+                 content: str = "", rss_summary: str = "") -> dict:
+    """AI 公司官网来源，默认 importance=2，确保不被老源挤掉"""
+    item = make_item(source, emoji, title, link, content, rss_summary)
+    item["importance"] = 2
+    return item
 
 def jina_fetch(url: str) -> str:
     """用 Jina Reader 抓取任意 URL 的纯文本内容"""
@@ -377,16 +384,17 @@ def fetch_wsj():
 # ─── AI 公司官网新闻源 ─────────────────────────────────────────────────────────
 
 def _scrape_blog(url: str, source: str, emoji: str,
-                 must_contain: str = "") -> list:
+                 must_contain: str = "", ai_source: bool = False) -> list:
     """
     通用博客页面爬取：
     1. Jina Reader 获取页面（处理 JS 渲染）
-    2. 解析 markdown 超链接，按 must_contain 过滤（只匹配域名/路径前缀）
+    2. 解析 markdown 超链接，按 must_contain 过滤
     3. 降级：BeautifulSoup 直接解析
     """
     from urllib.parse import urlparse
     parsed = urlparse(url)
     origin = f"{parsed.scheme}://{parsed.netloc}"
+    _make = make_ai_item if ai_source else make_item
 
     items, seen = [], set()
 
@@ -404,7 +412,7 @@ def _scrape_blog(url: str, source: str, emoji: str,
             if link in seen or link == url:
                 continue
             seen.add(link)
-            items.append(make_item(source, emoji, title.strip(), link))
+            items.append(_make(source, emoji, title.strip(), link))
             if len(items) >= FETCH_LIMIT:
                 break
 
@@ -429,7 +437,7 @@ def _scrape_blog(url: str, source: str, emoji: str,
                 if len(title) < 8:
                     continue
                 seen.add(href)
-                items.append(make_item(source, emoji, title, href))
+                items.append(_make(source, emoji, title, href))
                 if len(items) >= FETCH_LIMIT:
                     break
 
@@ -447,7 +455,7 @@ def fetch_deepmind_blog():
     if not results:
         results = _scrape_blog(
             "https://deepmind.google/discover/blog",
-            "DeepMind", "🧠", must_contain="deepmind.google"
+            "DeepMind", "🧠", must_contain="deepmind.google", ai_source=True
         )
     return results
 
@@ -459,7 +467,7 @@ def fetch_github_changelog():
     if not results:
         results = _scrape_blog(
             "https://github.blog/changelog/",
-            "GitHub Changelog", "🐙", must_contain="github.blog"
+            "GitHub Changelog", "🐙", must_contain="github.blog", ai_source=True
         )
     return results
 
@@ -476,14 +484,14 @@ def fetch_langchain_blog():
     if not results:
         results = _scrape_blog(
             "https://blog.langchain.dev/",
-            "LangChain", "⛓️", must_contain="blog.langchain.dev"
+            "LangChain", "⛓️", must_contain="blog.langchain.dev", ai_source=True
         )
     return results
 
 def fetch_meta_ai_blog():
     results = _scrape_blog(
         "https://ai.meta.com/blog/",
-        "Meta AI", "🌐", must_contain="ai.meta.com/blog"
+        "Meta AI", "🌐", must_contain="ai.meta.com/blog", ai_source=True
     )
     return results
 
@@ -492,7 +500,7 @@ def fetch_microsoft_ai_blog():
     if not results:
         results = _scrape_blog(
             "https://blogs.microsoft.com/ai/",
-            "Microsoft AI", "🪟", must_contain="blogs.microsoft.com/ai"
+            "Microsoft AI", "🪟", must_contain="blogs.microsoft.com/ai", ai_source=True
         )
     return results
 
@@ -503,7 +511,7 @@ def fetch_replit_blog():
     if not results:
         results = _scrape_blog(
             "https://blog.replit.com/",
-            "Replit", "💻", must_contain="blog.replit.com"
+            "Replit", "💻", must_contain="blog.replit.com", ai_source=True
         )
     return results
 
@@ -513,11 +521,10 @@ def fetch_replit_blog():
 def fetch_anthropic_news():
     return _scrape_blog(
         "https://www.anthropic.com/news",
-        "Anthropic", "🧬", must_contain="anthropic.com/news"
+        "Anthropic", "🧬", must_contain="anthropic.com/news", ai_source=True
     )
 
 def fetch_xai_blog():
-    # x.ai 直接请求 403，改用 Jina 抓取
     content = jina_fetch("https://x.ai/blog")
     if not content:
         print("  [xAI] Jina 返回空")
@@ -532,23 +539,22 @@ def fetch_xai_blog():
         if link in seen:
             continue
         seen.add(link)
-        items.append(make_item("xAI", "⚡", title.strip(), link))
+        items.append(make_ai_item("xAI", "⚡", title.strip(), link))
         if len(items) >= FETCH_LIMIT:
             break
     print(f"  [xAI] 最终 {len(items)} 条")
     return items
 
 def fetch_mistral_news():
-    results = _scrape_blog(
+    return _scrape_blog(
         "https://mistral.ai/news/",
-        "Mistral AI", "💫", must_contain="mistral.ai"
+        "Mistral AI", "💫", must_contain="mistral.ai", ai_source=True
     )
-    return results
 
 def fetch_cursor_blog():
     return _scrape_blog(
         "https://www.cursor.com/blog",
-        "Cursor", "🖱️", must_contain="cursor.com/blog"
+        "Cursor", "🖱️", must_contain="cursor.com/blog", ai_source=True
     )
 
 
@@ -744,6 +750,21 @@ def send_to_feishu(items: list):
 # ─── 来源列表 ──────────────────────────────────────────────────────────────────
 
 FETCHERS = [
+    # ── AI 公司官网（优先处理，确保进入 Claude 前几批）────────────────────────
+    ("OpenAI",           fetch_openai_blog),
+    ("Anthropic",        fetch_anthropic_news),
+    ("DeepMind",         fetch_deepmind_blog),
+    ("xAI",              fetch_xai_blog),
+    ("Mistral AI",       fetch_mistral_news),
+    ("HuggingFace",      fetch_huggingface_blog),
+    ("GitHub Changelog", fetch_github_changelog),
+    ("Meta AI",          fetch_meta_ai_blog),
+    ("Microsoft AI",     fetch_microsoft_ai_blog),
+    ("AWS ML",           fetch_aws_ml_blog),
+    ("LangChain",        fetch_langchain_blog),
+    ("Replit",           fetch_replit_blog),
+    ("Cursor",           fetch_cursor_blog),
+    # ── 综合科技与财经 ────────────────────────────────────────────────────────
     ("BBC中文",      fetch_bbc),
     ("路透中文",     fetch_reuters),
     ("晚点LatePost", fetch_latepost),
@@ -759,21 +780,6 @@ FETCHERS = [
     ("华尔街见闻",   fetch_wallstreetcn),
     ("Bloomberg",    fetch_bloomberg),
     ("WSJ",          fetch_wsj),
-    # ── AI 公司官网（第一批：RSS）─────────────────────────────────────────────
-    ("OpenAI",           fetch_openai_blog),
-    ("DeepMind",         fetch_deepmind_blog),
-    ("HuggingFace",      fetch_huggingface_blog),
-    ("GitHub Changelog", fetch_github_changelog),
-    ("AWS ML",           fetch_aws_ml_blog),
-    ("LangChain",        fetch_langchain_blog),
-    ("Meta AI",          fetch_meta_ai_blog),
-    ("Microsoft AI",     fetch_microsoft_ai_blog),
-    ("Replit",           fetch_replit_blog),
-    # ── AI 公司官网（第二批：爬页面）──────────────────────────────────────────
-    ("Anthropic",        fetch_anthropic_news),
-    ("xAI",              fetch_xai_blog),
-    ("Mistral AI",       fetch_mistral_news),
-    ("Cursor",           fetch_cursor_blog),
 ]
 
 # ─── 主流程 ────────────────────────────────────────────────────────────────────
