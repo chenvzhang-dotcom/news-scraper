@@ -5,7 +5,7 @@ on:
     - cron: '0 0 * * *'      # 北京时间 08:00 — 新闻日报
     - cron: '30 15 * * *'    # 北京时间 23:30 — JINSA 第一次检查
     - cron: '0 17 * * *'     # 北京时间 01:00 — JINSA 第二次检查
-    - cron: '0 7 1-7,15-21 * 0'  # 北京时间 15:00，每月第1和第3个周日 — 业绩日历
+    - cron: '0 7 * * 0'           # 北京时间 15:00，每周日触发（job 内判断是否第1/3个周日）
   workflow_dispatch:
     inputs:
       mode:
@@ -76,26 +76,42 @@ jobs:
           path: jinsa_sent.json
           retention-days: 7
 
-  # ── 3. 每周业绩日历（北京时间周日 15:00）────────────────────────────────
+  # ── 3. 业绩日历（北京时间每月第1和第3个周日 15:00）──────────────────────
   earnings-calendar:
     if: >
       (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'earnings') ||
-      github.event.schedule == '0 7 1-7,15-21 * 0'
+      github.event.schedule == '0 7 * * 0'
     runs-on: ubuntu-latest
     steps:
+      - name: 📆 检查是否第1或第3个周日
+        if: github.event_name != 'workflow_dispatch'
+        id: week_check
+        run: |
+          DAY=$(date -u +%d)
+          if [ "$DAY" -le 7 ] || ([ "$DAY" -ge 15 ] && [ "$DAY" -le 21 ]); then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ 跳过：今天是第 $DAY 日，不是第1或第3个周日"
+          fi
+
       - name: 📥 检出代码
+        if: github.event_name == 'workflow_dispatch' || steps.week_check.outputs.should_run == 'true'
         uses: actions/checkout@v5
 
       - name: 🐍 设置 Python 3.11
+        if: github.event_name == 'workflow_dispatch' || steps.week_check.outputs.should_run == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: 📦 安装依赖
+        if: github.event_name == 'workflow_dispatch' || steps.week_check.outputs.should_run == 'true'
         run: pip install -r requirements.txt yfinance
 
       - name: 📅 推送业绩日历
+        if: github.event_name == 'workflow_dispatch' || steps.week_check.outputs.should_run == 'true'
         env:
           FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
           ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
