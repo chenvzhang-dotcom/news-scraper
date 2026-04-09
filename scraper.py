@@ -1444,6 +1444,100 @@ def update_schedule_entry(key: str, updates: dict):
             json.dump(schedule, f, ensure_ascii=False, indent=2)
 
 
+# ─── SEC EDGAR 业绩公告抓取 ────────────────────────────────────────────────
+
+# Tier 1 美股的 CIK 编号（SEC EDGAR 用）
+US_TIER1_CIK = {
+    "MSFT":  "789019",
+    "NVDA":  "1045810",
+    "GOOG":  "1652044",
+    "META":  "1326801",
+    "AMZN":  "1018724",
+    "AMD":   "2488",
+    "MU":    "723125",
+    "LITE":  "1704715",
+    "SNDK":  "1000180",
+    "BABA":  "1577552",
+}
+SEC_HEADERS = {"User-Agent": "news-scraper earnings-bot@example.com"}
+
+
+def sec_fetch_press_release(ticker: str, filing_date: str):
+    """
+    从 SEC EDGAR 抓取 8-K 附带的 press release（Exhibit 99.1）。
+    返回纯文本（截取前 10000 字符）或 None。
+    """
+    cik = US_TIER1_CIK.get(ticker)
+    if not cik:
+        return None
+
+    try:
+        # 1) 获取公司的 filing 列表
+        url = f"https://data.sec.gov/submissions/CIK{cik.zfill(10)}.json"
+        resp = requests.get(url, headers=SEC_HEADERS, timeout=15)
+        resp.raise_for_status()
+        filings = resp.json()["filings"]["recent"]
+
+        # 2) 找 filing_date 附近的 8-K（±3天）
+        from datetime import date
+        target = datetime.strptime(filing_date, "%Y-%m-%d").date()
+        acc_num = None
+        for i in range(len(filings["form"])):
+            if filings["form"][i] != "8-K":
+                continue
+            fdate = datetime.strptime(filings["filingDate"][i], "%Y-%m-%d").date()
+            if abs((fdate - target).days) <= 3:
+                acc_num = filings["accessionNumber"][i].replace("-", "")
+                break
+
+        if not acc_num:
+            print(f"  ⚠️ SEC: 未找到 {ticker} 在 {filing_date} 附近的 8-K")
+            return None
+
+        # 3) 在 filing index 里找 press release（ex99, press, earnings）
+        index_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_num}/"
+        resp = requests.get(index_url, headers=SEC_HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        pr_href = None
+        for a in soup.find_all("a"):
+            href = a.get("href", "")
+            href_lower = href.lower()
+            # 只匹配 Archives 下的文件，排除 SEC 导航链接
+            if "/Archives/" not in href and not href_lower.endswith(".htm"):
+                continue
+            if any(kw in href_lower for kw in ["ex99", "exhibit99", "pressrelease", "earnings"]):
+                pr_href = href
+                break
+
+        if not pr_href:
+            print(f"  ⚠️ SEC: 找到 8-K 但无 press release 附件")
+            return None
+
+        # 4) 抓取 press release 全文
+        if not pr_href.startswith("http"):
+            pr_href = f"https://www.sec.gov{pr_href}" if pr_href.startswith("/") else f"{index_url}{pr_href}"
+        resp = requests.get(pr_href, headers=SEC_HEADERS, timeout=15)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text(separator="\n", strip=True)
+
+        # 去掉开头的 EDGAR 元数据
+        for marker in ["FOR IMMEDIATE RELEASE", "PRESS RELEASE", "Exhibit 99"]:
+            idx = text.find(marker)
+            if idx > 0:
+                text = text[idx:]
+                break
+
+        print(f"  📄 SEC: 抓取到 {ticker} press release（{len(text)} 字符）")
+        return text[:10000]
+
+    except Exception as e:
+        print(f"  ⚠️ SEC EDGAR 查询失败 ({ticker}): {e}")
+        return None
+
+
 # ─── yfinance 业绩数据查询 ─────────────────────────────────────────────────
 
 def yf_check_earnings_released(ticker: str, expected_date: str):
@@ -1524,7 +1618,7 @@ def yf_get_quarterly_financials(ticker: str):
 # ─── Claude 生成 ──────────────────────────────────────────────────────────
 
 EARNINGS_SUMMARY_PROMPT = """\
-你是一位专业的股票分析师。请根据以下财务数据，为 {company} ({ticker}) 生成一份简洁的业绩快报。
+你是一位专业的股票分析师。请根据以下数据，为 {company} ({ticker}) 生成一份简洁的业绩快报。
 
 ## 数据
 
@@ -1541,6 +1635,9 @@ EARNINGS_SUMMARY_PROMPT = """\
 {financials_json}
 说明：revenue=实际营收，gross_margin=毛利率%，operating_margin=经营利润率%，revenue_qoq=环比增长%
 
+### 公司 Press Release 原文（节选）
+{press_release}
+
 ## 要求
 请用中文输出，格式如下：
 
@@ -1549,9 +1646,11 @@ EARNINGS_SUMMARY_PROMPT = """\
 - EPS：实际值 vs 预期值（beat/miss 百分比）
 - 毛利率、经营利润率
 
-**业绩亮点**（3-5 条要点）
+**管理层要点**（3-5 条，基于 press release 中 CEO/CFO 的原话和公司公布的分业务数据）
 
-**业绩点评**（2-3 段，从投资者视角分析这份财报意味着什么，关注增长趋势、利润率变化、和未来展望）
+**下季度指引**（如 press release 中有 guidance/outlook，列出关键数字）
+
+**业绩点评**（2-3 段，基于上述数据和 press release 分析。只基于提供的信息，不要引入外部知识或猜测）
 
 保持简洁专业，每个要点一行。数据缺失则跳过，不要编造。金额用 B（十亿）或 M（百万）为单位。
 """
@@ -1658,6 +1757,9 @@ def main_earnings_alert():
         # 从日程中取出提前存好的 consensus
         consensus = entry.get("consensus", {})
 
+        # 从 SEC EDGAR 抓取 press release
+        press_release = sec_fetch_press_release(ticker, entry["date"]) or "无数据"
+
         # Claude 生成业绩快报
         prompt = EARNINGS_SUMMARY_PROMPT.format(
             company=company,
@@ -1667,6 +1769,7 @@ def main_earnings_alert():
             surprise_pct=surprise["surprise_pct"],
             financials_json=json.dumps(financials, ensure_ascii=False, indent=2) if financials else "无数据",
             consensus_json=json.dumps(consensus, ensure_ascii=False, indent=2) if consensus else "无数据",
+            press_release=press_release,
         )
         summary = claude_generate(prompt)
         if not summary:
