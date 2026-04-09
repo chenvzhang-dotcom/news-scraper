@@ -1366,26 +1366,51 @@ POLL_TIMEOUT_HOURS = 6
 
 # ─── 日程管理 ──────────────────────────────────────────────────────────────
 
+def _snapshot_consensus(ticker: str):
+    """在业绩发布前，快照当季 revenue/earnings consensus（发布后会滚动消失）"""
+    import yfinance as yf
+    snap = {}
+    try:
+        t = yf.Ticker(ticker)
+        re = t.revenue_estimate
+        if re is not None and not re.empty and "0q" in re.index:
+            snap["revenue_est_avg"]  = float(re.loc["0q", "avg"])
+            snap["revenue_est_low"]  = float(re.loc["0q", "low"])
+            snap["revenue_est_high"] = float(re.loc["0q", "high"])
+            snap["revenue_yoy_base"] = float(re.loc["0q", "yearAgoRevenue"])
+        ee = t.earnings_estimate
+        if ee is not None and not ee.empty and "0q" in ee.index:
+            snap["eps_est_avg"]  = float(ee.loc["0q", "avg"])
+            snap["eps_est_low"]  = float(ee.loc["0q", "low"])
+            snap["eps_est_high"] = float(ee.loc["0q", "high"])
+    except Exception as e:
+        print(f"  ⚠️ consensus 快照失败 ({ticker}): {e}")
+    return snap
+
+
 def save_earnings_schedule(us_cos: list, intl_cos: list):
     """从双周日历结果中提取 Tier 1 公司，写入 earnings_schedule.json"""
-    # 加载已有日程（保留尚未完成的条目）
+    import yfinance as yf
     schedule = load_earnings_schedule()
 
     tier1 = [c for c in us_cos + intl_cos if c.get("tier") == 1]
     for co in tier1:
         ticker = co["ticker"]
         date_str = co["date"]
-        time_tag = (co.get("time") or "").upper()  # BMO / AMC / ""
+        time_tag = (co.get("time") or "").upper()
 
-        # 计算轮询开始时间（UTC）
         hour = POLL_START_UTC.get(time_tag, 10)
         poll_start = f"{date_str}T{hour:02d}:00:00Z"
 
-        # 如果这个 ticker+date 已经处理完了，跳过
         key = f"{ticker}_{date_str}"
         existing = schedule.get(key, {})
         if existing.get("earnings_status") == "done":
             continue
+
+        # 快照 consensus（提前存好，发布后就查不到了）
+        consensus = existing.get("consensus") or _snapshot_consensus(ticker)
+        if consensus:
+            print(f"  📊 {ticker} consensus 已快照: rev_est={consensus.get('revenue_est_avg', 'N/A')}, eps_est={consensus.get('eps_est_avg', 'N/A')}")
 
         schedule[key] = {
             "ticker":             ticker,
@@ -1395,6 +1420,7 @@ def save_earnings_schedule(us_cos: list, intl_cos: list):
             "poll_start_utc":     poll_start,
             "market":             co.get("market", "美股"),
             "earnings_status":    existing.get("earnings_status", "pending"),
+            "consensus":          consensus,
         }
 
     with open(EARNINGS_SCHEDULE_FILE, "w") as f:
@@ -1507,16 +1533,21 @@ EARNINGS_SUMMARY_PROMPT = """\
 - 预期 EPS: {estimated_eps}
 - Surprise: {surprise_pct}%
 
-### 最新季度财务数据
+### 分析师预期（业绩发布前快照）
+{consensus_json}
+说明：revenue_est_avg=营收预期均值，eps_est_avg=EPS预期均值，revenue_yoy_base=去年同期营收
+
+### 最新季度财务数据（实际值）
 {financials_json}
+说明：revenue=实际营收，gross_margin=毛利率%，operating_margin=经营利润率%，revenue_qoq=环比增长%
 
 ## 要求
 请用中文输出，格式如下：
 
 **核心数据**
-- 营收：金额（环比变化，如数据可得）
-- EPS：实际值 vs 预期值（beat/miss）
-- 毛利率、经营利润率（如数据可得）
+- 营收：实际值 vs 预期值（beat/miss 百分比），同比增长
+- EPS：实际值 vs 预期值（beat/miss 百分比）
+- 毛利率、经营利润率
 
 **业绩亮点**（3-5 条要点）
 
@@ -1624,6 +1655,9 @@ def main_earnings_alert():
         # 拉取完整季度财务数据
         financials = yf_get_quarterly_financials(ticker)
 
+        # 从日程中取出提前存好的 consensus
+        consensus = entry.get("consensus", {})
+
         # Claude 生成业绩快报
         prompt = EARNINGS_SUMMARY_PROMPT.format(
             company=company,
@@ -1632,6 +1666,7 @@ def main_earnings_alert():
             estimated_eps=surprise["estimated_eps"],
             surprise_pct=surprise["surprise_pct"],
             financials_json=json.dumps(financials, ensure_ascii=False, indent=2) if financials else "无数据",
+            consensus_json=json.dumps(consensus, ensure_ascii=False, indent=2) if consensus else "无数据",
         )
         summary = claude_generate(prompt)
         if not summary:
