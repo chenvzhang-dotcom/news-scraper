@@ -27,7 +27,6 @@ FEISHU_WEBHOOK             = os.environ.get("FEISHU_WEBHOOK", "")
 ANTHROPIC_API_KEY          = os.environ.get("ANTHROPIC_API_KEY", "")
 FEISHU_WEBHOOK_EARNINGS    = os.environ.get("FEISHU_WEBHOOK_EARNINGS", "")
 API_NINJAS_KEY             = os.environ.get("API_NINJAS_KEY", "")
-FMP_API_KEY                = os.environ.get("FMP_API_KEY", "")
 
 JINSA_STATE_FILE           = "jinsa_sent.json"
 EARNINGS_SCHEDULE_FILE     = "earnings_schedule.json"
@@ -1385,7 +1384,7 @@ def save_earnings_schedule(us_cos: list, intl_cos: list):
         # 如果这个 ticker+date 已经处理完了，跳过
         key = f"{ticker}_{date_str}"
         existing = schedule.get(key, {})
-        if existing.get("earnings_status") == "done" and existing.get("transcript_status") == "done":
+        if existing.get("earnings_status") == "done":
             continue
 
         schedule[key] = {
@@ -1396,7 +1395,6 @@ def save_earnings_schedule(us_cos: list, intl_cos: list):
             "poll_start_utc":     poll_start,
             "market":             co.get("market", "美股"),
             "earnings_status":    existing.get("earnings_status", "pending"),
-            "transcript_status":  existing.get("transcript_status", "pending"),
         }
 
     with open(EARNINGS_SCHEDULE_FILE, "w") as f:
@@ -1420,66 +1418,81 @@ def update_schedule_entry(key: str, updates: dict):
             json.dump(schedule, f, ensure_ascii=False, indent=2)
 
 
-# ─── FMP API ───────────────────────────────────────────────────────────────
+# ─── yfinance 业绩数据查询 ─────────────────────────────────────────────────
 
-FMP_BASE = "https://financialmodelingprep.com/api/v3"
-
-def fmp_get(endpoint: str, params: dict = None) -> list | None:
-    if not FMP_API_KEY:
-        print("⚠️  未设置 FMP_API_KEY")
-        return None
-    params = params or {}
-    params["apikey"] = FMP_API_KEY
+def yf_check_earnings_released(ticker: str, expected_date: str):
+    """
+    检查某家公司是否已发布业绩（通过 earnings_dates 的 Reported EPS 是否有值）。
+    返回 {actual_eps, estimated_eps, surprise_pct} 或 None（尚未发布）。
+    """
+    import yfinance as yf
     try:
-        resp = requests.get(f"{FMP_BASE}/{endpoint}", params=params, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        return data if isinstance(data, list) else [data] if data else None
+        t = yf.Ticker(ticker)
+        ed = t.earnings_dates
+        if ed is None or ed.empty:
+            return None
+        # 在 earnings_dates 里找匹配日期的行
+        for idx, row in ed.iterrows():
+            row_date = str(idx.date()) if hasattr(idx, 'date') else str(idx)[:10]
+            if row_date != expected_date:
+                continue
+            reported = row.get("Reported EPS")
+            if reported is None or (hasattr(reported, '__float__') and str(reported) == 'nan'):
+                return None  # 还没发布
+            return {
+                "actual_eps":    float(reported),
+                "estimated_eps": float(row.get("EPS Estimate", 0) or 0),
+                "surprise_pct":  float(row.get("Surprise(%)", 0) or 0),
+            }
+        return None
     except Exception as e:
-        print(f"  ⚠️ FMP {endpoint} 请求失败: {e}")
+        print(f"  ⚠️ yfinance earnings_dates 查询失败 ({ticker}): {e}")
         return None
 
 
-def fmp_earnings_surprise(ticker: str) -> dict | None:
-    """获取最新的 EPS actual vs estimate"""
-    data = fmp_get(f"earnings-surprises/{ticker}")
-    return data[0] if data else None
+def yf_get_quarterly_financials(ticker: str):
+    """获取最新一季度的关键财务数据"""
+    import yfinance as yf
+    try:
+        t = yf.Ticker(ticker)
+        qi = t.quarterly_income_stmt
+        if qi is None or qi.empty:
+            return None
+        latest = qi.iloc[:, 0]  # 最新一季度
+        prev   = qi.iloc[:, 1] if qi.shape[1] > 1 else None  # 上一季度（用于环比）
 
+        def safe_get(series, key):
+            v = series.get(key)
+            if v is not None and str(v) != 'nan':
+                return float(v)
+            return None
 
-def fmp_income_statement(ticker: str) -> dict | None:
-    """获取最新季度财报"""
-    data = fmp_get(f"income-statement/{ticker}", {"period": "quarter", "limit": 1})
-    return data[0] if data else None
+        result = {
+            "period":          str(qi.columns[0].date()) if hasattr(qi.columns[0], 'date') else str(qi.columns[0]),
+            "revenue":         safe_get(latest, "Total Revenue"),
+            "gross_profit":    safe_get(latest, "Gross Profit"),
+            "operating_income": safe_get(latest, "Operating Income"),
+            "net_income":      safe_get(latest, "Net Income"),
+            "ebitda":          safe_get(latest, "EBITDA"),
+            "eps":             safe_get(latest, "Diluted EPS"),
+            "basic_eps":       safe_get(latest, "Basic EPS"),
+            "r_and_d":         safe_get(latest, "Research And Development"),
+        }
+        if result["revenue"] and result["gross_profit"]:
+            result["gross_margin"] = round(result["gross_profit"] / result["revenue"] * 100, 1)
+        if result["revenue"] and result["operating_income"]:
+            result["operating_margin"] = round(result["operating_income"] / result["revenue"] * 100, 1)
 
+        # 上季度营收（用于计算环比）
+        if prev is not None:
+            prev_rev = safe_get(prev, "Total Revenue")
+            if prev_rev and result["revenue"]:
+                result["revenue_qoq"] = round((result["revenue"] / prev_rev - 1) * 100, 1)
 
-def fmp_analyst_estimates(ticker: str) -> dict | None:
-    """获取分析师预期（营收等）"""
-    data = fmp_get(f"analyst-estimates/{ticker}", {"period": "quarter", "limit": 1})
-    return data[0] if data else None
-
-
-def fmp_earnings_transcript(ticker: str, year: int, quarter: int) -> str | None:
-    """获取电话会议纪要全文"""
-    data = fmp_get(f"earning_call_transcript/{ticker}", {"year": year, "quarter": quarter})
-    if data and data[0].get("content"):
-        return data[0]["content"]
-    return None
-
-
-def guess_quarter(date_str: str) -> tuple[int, int]:
-    """从业绩发布日期推断报告的是哪个季度（上一个季度）"""
-    d = datetime.strptime(date_str, "%Y-%m-%d")
-    # 业绩发布通常是上个季度的结果
-    # Q1 报告在 4-5 月发布，Q2 在 7-8 月，Q3 在 10-11 月，Q4 在 1-2 月
-    month = d.month
-    if month <= 3:
-        return d.year - 1, 4   # Q4 of previous year
-    elif month <= 6:
-        return d.year, 1       # Q1
-    elif month <= 9:
-        return d.year, 2       # Q2
-    else:
-        return d.year, 3       # Q3
+        return result
+    except Exception as e:
+        print(f"  ⚠️ yfinance quarterly_income_stmt 查询失败 ({ticker}): {e}")
+        return None
 
 
 # ─── Claude 生成 ──────────────────────────────────────────────────────────
@@ -1492,48 +1505,29 @@ EARNINGS_SUMMARY_PROMPT = """\
 ### EPS（每股收益）
 - 实际 EPS: {actual_eps}
 - 预期 EPS: {estimated_eps}
+- Surprise: {surprise_pct}%
 
 ### 最新季度财务数据
-{income_json}
-
-### 分析师预期
-{estimates_json}
+{financials_json}
 
 ## 要求
 请用中文输出，格式如下：
 
 **核心数据**
-- 营收：实际值 vs 预期值（beat/miss 百分比）
-- EPS：实际值 vs 预期值（beat/miss 百分比）
-- 其他关键指标（如毛利率、经营利润等，如数据可得）
+- 营收：金额（环比变化，如数据可得）
+- EPS：实际值 vs 预期值（beat/miss）
+- 毛利率、经营利润率（如数据可得）
 
 **业绩亮点**（3-5 条要点）
 
 **业绩点评**（2-3 段，从投资者视角分析这份财报意味着什么，关注增长趋势、利润率变化、和未来展望）
 
-保持简洁专业，每个要点一行。如果某些数据缺失，跳过不要编造。
-"""
-
-TRANSCRIPT_SUMMARY_PROMPT = """\
-你是一位专业的股票分析师。请根据以下 {company} ({ticker}) 的业绩电话会议纪要，生成一份管理层电话会摘要。
-
-## 电话会原文（截取前 15000 字）
-{transcript}
-
-## 要求
-请用中文输出，格式如下：
-
-**管理层核心观点**（5-8 条要点，涵盖业绩回顾、业务展望、战略方向）
-
-**Q&A 环节要点**（5-8 条，分析师最关注的问题及管理层回答）
-
-**关键信号**（2-3 条，对投资决策最重要的信息）
-
-保持简洁专业，忠实于原文内容，不要编造。
+保持简洁专业，每个要点一行。数据缺失则跳过，不要编造。金额用 B（十亿）或 M（百万）为单位。
 """
 
 
-def claude_generate(prompt: str) -> str | None:
+
+def claude_generate(prompt: str):
     """调用 Claude API 生成内容"""
     if not ANTHROPIC_API_KEY:
         print("⚠️  未设置 ANTHROPIC_API_KEY")
@@ -1574,28 +1568,12 @@ def build_earnings_alert_card(company: str, ticker: str, market: str, summary: s
             "elements": [
                 {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
                 {"tag": "note", "elements": [{"tag": "plain_text",
-                    "content": f"{market} · 来源：FMP + Claude · {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')} 北京时间"}]},
+                    "content": f"{market} · 来源：yfinance + Claude · {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')} 北京时间"}]},
             ],
         },
     }
 
 
-def build_transcript_alert_card(company: str, ticker: str, market: str, summary: str) -> dict:
-    """构建电话会纪要飞书卡片"""
-    return {
-        "msg_type": "interactive",
-        "card": {
-            "header": {
-                "title":    {"tag": "plain_text", "content": f"📞 电话会纪要 · {company} ({ticker})"},
-                "template": "blue",
-            },
-            "elements": [
-                {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
-                {"tag": "note", "elements": [{"tag": "plain_text",
-                    "content": f"{market} · 来源：FMP + Claude · {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')} 北京时间"}]},
-            ],
-        },
-    }
 
 
 # ─── 主函数：业绩快报轮询 ─────────────────────────────────────────────────
@@ -1635,26 +1613,25 @@ def main_earnings_alert():
         market = entry.get("market", "美股")
         print(f"\n  🔍 查询 {company} ({ticker}) ...")
 
-        # 查 FMP 是否有最新业绩数据
-        surprise = fmp_earnings_surprise(ticker)
-        if not surprise or surprise.get("date", "") != entry["date"]:
-            print(f"  ❌ 尚未发布（FMP 无当日数据）")
+        # 用 yfinance 检查是否已发布业绩
+        surprise = yf_check_earnings_released(ticker, entry["date"])
+        if not surprise:
+            print(f"  ❌ 尚未发布（Reported EPS 为空）")
             continue
 
-        print(f"  ✅ 找到业绩数据！EPS actual={surprise.get('actualEarningResult')} vs est={surprise.get('estimatedEarning')}")
+        print(f"  ✅ 找到业绩数据！EPS actual={surprise['actual_eps']} vs est={surprise['estimated_eps']} (surprise={surprise['surprise_pct']}%)")
 
-        # 拉取完整财务数据
-        income = fmp_income_statement(ticker)
-        estimates = fmp_analyst_estimates(ticker)
+        # 拉取完整季度财务数据
+        financials = yf_get_quarterly_financials(ticker)
 
         # Claude 生成业绩快报
         prompt = EARNINGS_SUMMARY_PROMPT.format(
             company=company,
             ticker=ticker,
-            actual_eps=surprise.get("actualEarningResult", "N/A"),
-            estimated_eps=surprise.get("estimatedEarning", "N/A"),
-            income_json=json.dumps(income, ensure_ascii=False, indent=2) if income else "无数据",
-            estimates_json=json.dumps(estimates, ensure_ascii=False, indent=2) if estimates else "无数据",
+            actual_eps=surprise["actual_eps"],
+            estimated_eps=surprise["estimated_eps"],
+            surprise_pct=surprise["surprise_pct"],
+            financials_json=json.dumps(financials, ensure_ascii=False, indent=2) if financials else "无数据",
         )
         summary = claude_generate(prompt)
         if not summary:
@@ -1670,68 +1647,6 @@ def main_earnings_alert():
     print("\n轮询完成\n")
 
 
-# ─── 主函数：电话会纪要轮询 ────────────────────────────────────────────────
-
-def main_transcript_alert():
-    """轮询 Tier 1 公司电话会纪要，生成摘要并推送"""
-    now_utc = datetime.now(timezone.utc)
-    print(f"\n{'='*50}")
-    print(f"电话会纪要轮询 · {now_utc.strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"{'='*50}")
-
-    schedule = load_earnings_schedule()
-    if not schedule:
-        print("  无日程，退出")
-        return
-
-    for key, entry in schedule.items():
-        # 只处理业绩已推送但 transcript 还 pending 的
-        if entry.get("earnings_status") != "done":
-            continue
-        if entry.get("transcript_status") != "pending":
-            continue
-
-        # transcript 超时检查（业绩发布后 24 小时）
-        poll_start = datetime.fromisoformat(entry["poll_start_utc"].replace("Z", "+00:00"))
-        hours_since_earnings = (now_utc - poll_start).total_seconds() / 3600
-        if hours_since_earnings > 24:
-            print(f"  ⏰ {entry['ticker']} transcript 超时（>24h），标记 timeout")
-            update_schedule_entry(key, {"transcript_status": "timeout"})
-            continue
-
-        ticker = entry["ticker"]
-        company = entry["company"]
-        market = entry.get("market", "美股")
-        print(f"\n  🔍 查询 {company} ({ticker}) transcript ...")
-
-        year, quarter = guess_quarter(entry["date"])
-        transcript = fmp_earnings_transcript(ticker, year, quarter)
-        if not transcript:
-            print(f"  ❌ transcript 尚未上线")
-            continue
-
-        print(f"  ✅ 找到 transcript（{len(transcript)} 字）")
-
-        # Claude 生成纪要摘要
-        prompt = TRANSCRIPT_SUMMARY_PROMPT.format(
-            company=company,
-            ticker=ticker,
-            transcript=transcript[:15000],
-        )
-        summary = claude_generate(prompt)
-        if not summary:
-            print(f"  ❌ Claude 生成失败，下次重试")
-            continue
-
-        # 推送飞书
-        card = build_transcript_alert_card(company, ticker, market, summary)
-        if feishu_send(FEISHU_WEBHOOK_EARNINGS, card, f"电话会纪要·{ticker}"):
-            update_schedule_entry(key, {"transcript_status": "done"})
-            print(f"  ✅ {ticker} 电话会纪要已推送")
-
-    print("\n轮询完成\n")
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 # 入口
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1743,13 +1658,7 @@ if __name__ == "__main__":
         main_jinsa()
     elif mode == "earnings":
         main_earnings()
-    elif mode == "earnings-alert":
+    elif mode in ("earnings-alert", "earnings-poll"):
         main_earnings_alert()
-    elif mode == "transcript-alert":
-        main_transcript_alert()
-    elif mode == "earnings-poll":
-        # 合并轮询：先查业绩，再查 transcript
-        main_earnings_alert()
-        main_transcript_alert()
     else:
         main()
