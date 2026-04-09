@@ -27,8 +27,10 @@ FEISHU_WEBHOOK             = os.environ.get("FEISHU_WEBHOOK", "")
 ANTHROPIC_API_KEY          = os.environ.get("ANTHROPIC_API_KEY", "")
 FEISHU_WEBHOOK_EARNINGS    = os.environ.get("FEISHU_WEBHOOK_EARNINGS", "")
 API_NINJAS_KEY             = os.environ.get("API_NINJAS_KEY", "")
+FMP_API_KEY                = os.environ.get("FMP_API_KEY", "")
 
-JINSA_STATE_FILE = "jinsa_sent.json"
+JINSA_STATE_FILE           = "jinsa_sent.json"
+EARNINGS_SCHEDULE_FILE     = "earnings_schedule.json"
 
 MAX_TOTAL         = 30      # 最终推送总条数上限
 MAX_PER_SOURCE    = 5       # 单个来源最多推送条数
@@ -1110,7 +1112,7 @@ def main_jinsa():
 
 WEEKDAY_ZH = {0: "周一", 1: "周二", 2: "周三", 3: "周四", 4: "周五"}
 
-# 美股白名单
+# 美股白名单（tier: 1=重点, 2=关注）
 US_WATCHLIST = [
     "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "META", "AMZN", "TSLA", "AVGO", "ORCL",
     "AMD", "INTC", "MU", "MRVL",
@@ -1120,19 +1122,23 @@ US_WATCHLIST = [
     "RBLX", "LITE", "COHR", "SNDK", "HOOD", "NOK", "PDD", "BABA", "TCEHY", "APP",
     "PYPL", "SQ",
 ]
+US_TIER1 = {
+    "MSFT", "NVDA", "GOOG", "META", "AMZN",
+    "AMD", "MU", "LITE", "SNDK", "BABA",
+}
 
-# 港股 + 韩股白名单
+# 港股 + 韩股白名单（tier: 1=重点, 2=关注）
 INTL_WATCHLIST = [
-    {"company": "腾讯控股",  "ticker": "0700.HK",   "market": "港股", "freq": "季报"},
-    {"company": "阿里巴巴",  "ticker": "9988.HK",   "market": "港股", "freq": "季报"},
-    {"company": "小米集团",  "ticker": "1810.HK",   "market": "港股", "freq": "季报"},
-    {"company": "快手",      "ticker": "1024.HK",   "market": "港股", "freq": "季报"},
-    {"company": "泡泡玛特",  "ticker": "9992.HK",   "market": "港股", "freq": "半年报"},
-    {"company": "MiniMax",   "ticker": "待确认",     "market": "港股", "freq": "季报"},
-    {"company": "智谱",      "ticker": "待确认",     "market": "港股", "freq": "季报"},
-    {"company": "壁仞科技",  "ticker": "待确认",     "market": "港股", "freq": "季报"},
-    {"company": "三星电子",  "ticker": "005930.KS", "market": "韩股", "freq": "季报"},
-    {"company": "SK 海力士", "ticker": "000660.KS", "market": "韩股", "freq": "季报"},
+    {"company": "腾讯控股",  "ticker": "0700.HK",   "market": "港股", "freq": "季报",   "tier": 2},
+    {"company": "阿里巴巴",  "ticker": "9988.HK",   "market": "港股", "freq": "季报",   "tier": 2},
+    {"company": "小米集团",  "ticker": "1810.HK",   "market": "港股", "freq": "季报",   "tier": 2},
+    {"company": "快手",      "ticker": "1024.HK",   "market": "港股", "freq": "季报",   "tier": 1},
+    {"company": "泡泡玛特",  "ticker": "9992.HK",   "market": "港股", "freq": "半年报", "tier": 2},
+    {"company": "MiniMax",   "ticker": "00100.HK",  "market": "港股", "freq": "季报",   "tier": 1},
+    {"company": "智谱",      "ticker": "02513.HK",  "market": "港股", "freq": "季报",   "tier": 1},
+    {"company": "壁仞科技",  "ticker": "06082.HK",  "market": "港股", "freq": "季报",   "tier": 1},
+    {"company": "三星电子",  "ticker": "005930.KS", "market": "韩股", "freq": "季报",   "tier": 1},
+    {"company": "SK 海力士", "ticker": "000660.KS", "market": "韩股", "freq": "季报",   "tier": 1},
 ]
 
 
@@ -1187,6 +1193,7 @@ def yf_fetch_earnings(tickers: list, target_dates: set) -> list:
                     "sector":     sector,
                     "market":     "美股",
                     "confirmed":  True,
+                    "tier":       1 if ticker in US_TIER1 else 2,
                 })
                 break
         except Exception:
@@ -1281,13 +1288,14 @@ def build_earnings_card(us_cos: list, intl_cos: list, week_str: str) -> dict:
             ticker_colored = f"<font color='{ticker_color}'>{ticker}</font>"
 
             # 第一行：公司名 ticker · 市场 · 市值 · 行业
+            tier_badge = "⭐ " if co.get("tier") == 1 else ""
             parts = [market]
             if cap:
                 parts.append(cap)
             if sector:
                 parts.append(sector)
             meta = " · ".join(parts)
-            line1 = f"**{name}** {ticker_colored}  {meta}"
+            line1 = f"{tier_badge}**{name}** {ticker_colored}  {meta}"
 
             # 第二行：业绩发布日期
             try:
@@ -1342,7 +1350,386 @@ def main_earnings():
     payload = build_earnings_card(us_cos, intl_cos, week_str)
     feishu_send(FEISHU_WEBHOOK_EARNINGS, payload, "业绩日历")
 
+    # 保存 Tier 1 公司的业绩日程，供轮询任务使用
+    save_earnings_schedule(us_cos, intl_cos)
+
     print("\n完成！\n")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. 业绩快报 + 电话会纪要（Tier 1 实时轮询）
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ─── 默认轮询起始时间（UTC）─────────────────────────────────────────────────
+# BMO（盘前）→ UTC 10:00 | AMC（盘后）→ UTC 20:30 | 未知 → BMO 窗口
+POLL_START_UTC = {"BMO": 10, "AMC": 20, "": 10}
+POLL_TIMEOUT_HOURS = 6
+
+# ─── 日程管理 ──────────────────────────────────────────────────────────────
+
+def save_earnings_schedule(us_cos: list, intl_cos: list):
+    """从双周日历结果中提取 Tier 1 公司，写入 earnings_schedule.json"""
+    # 加载已有日程（保留尚未完成的条目）
+    schedule = load_earnings_schedule()
+
+    tier1 = [c for c in us_cos + intl_cos if c.get("tier") == 1]
+    for co in tier1:
+        ticker = co["ticker"]
+        date_str = co["date"]
+        time_tag = (co.get("time") or "").upper()  # BMO / AMC / ""
+
+        # 计算轮询开始时间（UTC）
+        hour = POLL_START_UTC.get(time_tag, 10)
+        poll_start = f"{date_str}T{hour:02d}:00:00Z"
+
+        # 如果这个 ticker+date 已经处理完了，跳过
+        key = f"{ticker}_{date_str}"
+        existing = schedule.get(key, {})
+        if existing.get("earnings_status") == "done" and existing.get("transcript_status") == "done":
+            continue
+
+        schedule[key] = {
+            "ticker":             ticker,
+            "company":            co.get("company", ticker),
+            "date":               date_str,
+            "time_tag":           time_tag,
+            "poll_start_utc":     poll_start,
+            "market":             co.get("market", "美股"),
+            "earnings_status":    existing.get("earnings_status", "pending"),
+            "transcript_status":  existing.get("transcript_status", "pending"),
+        }
+
+    with open(EARNINGS_SCHEDULE_FILE, "w") as f:
+        json.dump(schedule, f, ensure_ascii=False, indent=2)
+    print(f"  📅 已保存 {len(tier1)} 家 Tier 1 公司的业绩日程")
+
+
+def load_earnings_schedule() -> dict:
+    try:
+        with open(EARNINGS_SCHEDULE_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def update_schedule_entry(key: str, updates: dict):
+    schedule = load_earnings_schedule()
+    if key in schedule:
+        schedule[key].update(updates)
+        with open(EARNINGS_SCHEDULE_FILE, "w") as f:
+            json.dump(schedule, f, ensure_ascii=False, indent=2)
+
+
+# ─── FMP API ───────────────────────────────────────────────────────────────
+
+FMP_BASE = "https://financialmodelingprep.com/api/v3"
+
+def fmp_get(endpoint: str, params: dict = None) -> list | None:
+    if not FMP_API_KEY:
+        print("⚠️  未设置 FMP_API_KEY")
+        return None
+    params = params or {}
+    params["apikey"] = FMP_API_KEY
+    try:
+        resp = requests.get(f"{FMP_BASE}/{endpoint}", params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, list) else [data] if data else None
+    except Exception as e:
+        print(f"  ⚠️ FMP {endpoint} 请求失败: {e}")
+        return None
+
+
+def fmp_earnings_surprise(ticker: str) -> dict | None:
+    """获取最新的 EPS actual vs estimate"""
+    data = fmp_get(f"earnings-surprises/{ticker}")
+    return data[0] if data else None
+
+
+def fmp_income_statement(ticker: str) -> dict | None:
+    """获取最新季度财报"""
+    data = fmp_get(f"income-statement/{ticker}", {"period": "quarter", "limit": 1})
+    return data[0] if data else None
+
+
+def fmp_analyst_estimates(ticker: str) -> dict | None:
+    """获取分析师预期（营收等）"""
+    data = fmp_get(f"analyst-estimates/{ticker}", {"period": "quarter", "limit": 1})
+    return data[0] if data else None
+
+
+def fmp_earnings_transcript(ticker: str, year: int, quarter: int) -> str | None:
+    """获取电话会议纪要全文"""
+    data = fmp_get(f"earning_call_transcript/{ticker}", {"year": year, "quarter": quarter})
+    if data and data[0].get("content"):
+        return data[0]["content"]
+    return None
+
+
+def guess_quarter(date_str: str) -> tuple[int, int]:
+    """从业绩发布日期推断报告的是哪个季度（上一个季度）"""
+    d = datetime.strptime(date_str, "%Y-%m-%d")
+    # 业绩发布通常是上个季度的结果
+    # Q1 报告在 4-5 月发布，Q2 在 7-8 月，Q3 在 10-11 月，Q4 在 1-2 月
+    month = d.month
+    if month <= 3:
+        return d.year - 1, 4   # Q4 of previous year
+    elif month <= 6:
+        return d.year, 1       # Q1
+    elif month <= 9:
+        return d.year, 2       # Q2
+    else:
+        return d.year, 3       # Q3
+
+
+# ─── Claude 生成 ──────────────────────────────────────────────────────────
+
+EARNINGS_SUMMARY_PROMPT = """\
+你是一位专业的股票分析师。请根据以下财务数据，为 {company} ({ticker}) 生成一份简洁的业绩快报。
+
+## 数据
+
+### EPS（每股收益）
+- 实际 EPS: {actual_eps}
+- 预期 EPS: {estimated_eps}
+
+### 最新季度财务数据
+{income_json}
+
+### 分析师预期
+{estimates_json}
+
+## 要求
+请用中文输出，格式如下：
+
+**核心数据**
+- 营收：实际值 vs 预期值（beat/miss 百分比）
+- EPS：实际值 vs 预期值（beat/miss 百分比）
+- 其他关键指标（如毛利率、经营利润等，如数据可得）
+
+**业绩亮点**（3-5 条要点）
+
+**业绩点评**（2-3 段，从投资者视角分析这份财报意味着什么，关注增长趋势、利润率变化、和未来展望）
+
+保持简洁专业，每个要点一行。如果某些数据缺失，跳过不要编造。
+"""
+
+TRANSCRIPT_SUMMARY_PROMPT = """\
+你是一位专业的股票分析师。请根据以下 {company} ({ticker}) 的业绩电话会议纪要，生成一份管理层电话会摘要。
+
+## 电话会原文（截取前 15000 字）
+{transcript}
+
+## 要求
+请用中文输出，格式如下：
+
+**管理层核心观点**（5-8 条要点，涵盖业绩回顾、业务展望、战略方向）
+
+**Q&A 环节要点**（5-8 条，分析师最关注的问题及管理层回答）
+
+**关键信号**（2-3 条，对投资决策最重要的信息）
+
+保持简洁专业，忠实于原文内容，不要编造。
+"""
+
+
+def claude_generate(prompt: str) -> str | None:
+    """调用 Claude API 生成内容"""
+    if not ANTHROPIC_API_KEY:
+        print("⚠️  未设置 ANTHROPIC_API_KEY")
+        return None
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":      "claude-sonnet-4-20250514",
+                "max_tokens": 4000,
+                "messages":   [{"role": "user", "content": prompt}],
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["content"][0]["text"].strip()
+    except Exception as e:
+        print(f"  ❌ Claude API 调用失败: {e}")
+        return None
+
+
+# ─── 飞书卡片构建 ──────────────────────────────────────────────────────────
+
+def build_earnings_alert_card(company: str, ticker: str, market: str, summary: str) -> dict:
+    """构建业绩快报飞书卡片"""
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title":    {"tag": "plain_text", "content": f"⭐ 业绩快报 · {company} ({ticker})"},
+                "template": "red",
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
+                {"tag": "note", "elements": [{"tag": "plain_text",
+                    "content": f"{market} · 来源：FMP + Claude · {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')} 北京时间"}]},
+            ],
+        },
+    }
+
+
+def build_transcript_alert_card(company: str, ticker: str, market: str, summary: str) -> dict:
+    """构建电话会纪要飞书卡片"""
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title":    {"tag": "plain_text", "content": f"📞 电话会纪要 · {company} ({ticker})"},
+                "template": "blue",
+            },
+            "elements": [
+                {"tag": "div", "text": {"tag": "lark_md", "content": summary}},
+                {"tag": "note", "elements": [{"tag": "plain_text",
+                    "content": f"{market} · 来源：FMP + Claude · {datetime.now(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M')} 北京时间"}]},
+            ],
+        },
+    }
+
+
+# ─── 主函数：业绩快报轮询 ─────────────────────────────────────────────────
+
+def main_earnings_alert():
+    """轮询 Tier 1 公司业绩数据，生成快报并推送"""
+    now_utc = datetime.now(timezone.utc)
+    print(f"\n{'='*50}")
+    print(f"业绩快报轮询 · {now_utc.strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"{'='*50}")
+
+    schedule = load_earnings_schedule()
+    if not schedule:
+        print("  无日程，退出")
+        return
+
+    for key, entry in schedule.items():
+        status = entry.get("earnings_status", "pending")
+        if status != "pending":
+            continue
+
+        # 检查是否到了轮询开始时间
+        poll_start = datetime.fromisoformat(entry["poll_start_utc"].replace("Z", "+00:00"))
+        if now_utc < poll_start:
+            print(f"  ⏳ {entry['ticker']} 未到轮询时间（{entry['poll_start_utc']}）")
+            continue
+
+        # 检查是否超时
+        hours_elapsed = (now_utc - poll_start).total_seconds() / 3600
+        if hours_elapsed > POLL_TIMEOUT_HOURS:
+            print(f"  ⏰ {entry['ticker']} 超时（>{POLL_TIMEOUT_HOURS}h），标记 timeout")
+            update_schedule_entry(key, {"earnings_status": "timeout"})
+            continue
+
+        ticker = entry["ticker"]
+        company = entry["company"]
+        market = entry.get("market", "美股")
+        print(f"\n  🔍 查询 {company} ({ticker}) ...")
+
+        # 查 FMP 是否有最新业绩数据
+        surprise = fmp_earnings_surprise(ticker)
+        if not surprise or surprise.get("date", "") != entry["date"]:
+            print(f"  ❌ 尚未发布（FMP 无当日数据）")
+            continue
+
+        print(f"  ✅ 找到业绩数据！EPS actual={surprise.get('actualEarningResult')} vs est={surprise.get('estimatedEarning')}")
+
+        # 拉取完整财务数据
+        income = fmp_income_statement(ticker)
+        estimates = fmp_analyst_estimates(ticker)
+
+        # Claude 生成业绩快报
+        prompt = EARNINGS_SUMMARY_PROMPT.format(
+            company=company,
+            ticker=ticker,
+            actual_eps=surprise.get("actualEarningResult", "N/A"),
+            estimated_eps=surprise.get("estimatedEarning", "N/A"),
+            income_json=json.dumps(income, ensure_ascii=False, indent=2) if income else "无数据",
+            estimates_json=json.dumps(estimates, ensure_ascii=False, indent=2) if estimates else "无数据",
+        )
+        summary = claude_generate(prompt)
+        if not summary:
+            print(f"  ❌ Claude 生成失败，下次重试")
+            continue
+
+        # 推送飞书
+        card = build_earnings_alert_card(company, ticker, market, summary)
+        if feishu_send(FEISHU_WEBHOOK_EARNINGS, card, f"业绩快报·{ticker}"):
+            update_schedule_entry(key, {"earnings_status": "done"})
+            print(f"  ✅ {ticker} 业绩快报已推送")
+
+    print("\n轮询完成\n")
+
+
+# ─── 主函数：电话会纪要轮询 ────────────────────────────────────────────────
+
+def main_transcript_alert():
+    """轮询 Tier 1 公司电话会纪要，生成摘要并推送"""
+    now_utc = datetime.now(timezone.utc)
+    print(f"\n{'='*50}")
+    print(f"电话会纪要轮询 · {now_utc.strftime('%Y-%m-%d %H:%M UTC')}")
+    print(f"{'='*50}")
+
+    schedule = load_earnings_schedule()
+    if not schedule:
+        print("  无日程，退出")
+        return
+
+    for key, entry in schedule.items():
+        # 只处理业绩已推送但 transcript 还 pending 的
+        if entry.get("earnings_status") != "done":
+            continue
+        if entry.get("transcript_status") != "pending":
+            continue
+
+        # transcript 超时检查（业绩发布后 24 小时）
+        poll_start = datetime.fromisoformat(entry["poll_start_utc"].replace("Z", "+00:00"))
+        hours_since_earnings = (now_utc - poll_start).total_seconds() / 3600
+        if hours_since_earnings > 24:
+            print(f"  ⏰ {entry['ticker']} transcript 超时（>24h），标记 timeout")
+            update_schedule_entry(key, {"transcript_status": "timeout"})
+            continue
+
+        ticker = entry["ticker"]
+        company = entry["company"]
+        market = entry.get("market", "美股")
+        print(f"\n  🔍 查询 {company} ({ticker}) transcript ...")
+
+        year, quarter = guess_quarter(entry["date"])
+        transcript = fmp_earnings_transcript(ticker, year, quarter)
+        if not transcript:
+            print(f"  ❌ transcript 尚未上线")
+            continue
+
+        print(f"  ✅ 找到 transcript（{len(transcript)} 字）")
+
+        # Claude 生成纪要摘要
+        prompt = TRANSCRIPT_SUMMARY_PROMPT.format(
+            company=company,
+            ticker=ticker,
+            transcript=transcript[:15000],
+        )
+        summary = claude_generate(prompt)
+        if not summary:
+            print(f"  ❌ Claude 生成失败，下次重试")
+            continue
+
+        # 推送飞书
+        card = build_transcript_alert_card(company, ticker, market, summary)
+        if feishu_send(FEISHU_WEBHOOK_EARNINGS, card, f"电话会纪要·{ticker}"):
+            update_schedule_entry(key, {"transcript_status": "done"})
+            print(f"  ✅ {ticker} 电话会纪要已推送")
+
+    print("\n轮询完成\n")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1356,5 +1743,13 @@ if __name__ == "__main__":
         main_jinsa()
     elif mode == "earnings":
         main_earnings()
+    elif mode == "earnings-alert":
+        main_earnings_alert()
+    elif mode == "transcript-alert":
+        main_transcript_alert()
+    elif mode == "earnings-poll":
+        # 合并轮询：先查业绩，再查 transcript
+        main_earnings_alert()
+        main_transcript_alert()
     else:
         main()

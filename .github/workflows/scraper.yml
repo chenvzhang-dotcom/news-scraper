@@ -6,10 +6,11 @@ on:
     - cron: '30 15 * * *'    # 北京时间 23:30 — JINSA 第一次检查
     - cron: '0 17 * * *'     # 北京时间 01:00 — JINSA 第二次检查
     - cron: '0 7 * * 0'           # 北京时间 15:00，每周日触发（job 内判断是否第1/3个周日）
+    - cron: '*/10 * * * *'       # 每10分钟 — 业绩快报+电话会纪要轮询
   workflow_dispatch:
     inputs:
       mode:
-        description: '运行模式 (news / jinsa / earnings)'
+        description: '运行模式 (news / jinsa / earnings / earnings-poll)'
         required: false
         default: 'news'
 
@@ -116,3 +117,59 @@ jobs:
           FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
           ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scraper.py earnings
+
+      - name: 💾 提交业绩日程文件
+        if: github.event_name == 'workflow_dispatch' || steps.week_check.outputs.should_run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add earnings_schedule.json
+          git diff --cached --quiet || git commit -m "更新 Tier 1 业绩轮询日程"
+          git push
+
+  # ── 4. 业绩快报 + 电话会纪要轮询（每10分钟）─────────────────────────────
+  earnings-poll:
+    if: >
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'earnings-poll') ||
+      github.event.schedule == '*/10 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 📋 检查是否有待处理日程
+        id: schedule_check
+        run: |
+          if [ -f earnings_schedule.json ] && grep -q '"pending"' earnings_schedule.json; then
+            echo "has_pending=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_pending=false" >> "$GITHUB_OUTPUT"
+            echo "⏭️ 无待处理的业绩日程"
+          fi
+
+      - name: 🐍 设置 Python 3.11
+        if: steps.schedule_check.outputs.has_pending == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖
+        if: steps.schedule_check.outputs.has_pending == 'true'
+        run: pip install -r requirements.txt yfinance
+
+      - name: 🔔 轮询业绩快报 + 电话会纪要
+        if: steps.schedule_check.outputs.has_pending == 'true'
+        env:
+          FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+          FMP_API_KEY:               ${{ secrets.FMP_API_KEY }}
+        run: python scraper.py earnings-poll
+
+      - name: 💾 更新日程状态
+        if: steps.schedule_check.outputs.has_pending == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add earnings_schedule.json
+          git diff --cached --quiet || (git commit -m "更新业绩轮询状态" && git push)
