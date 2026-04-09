@@ -1677,7 +1677,9 @@ def claude_generate(prompt: str):
             },
             timeout=120,
         )
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            print(f"  ❌ Claude API 错误 {resp.status_code}: {resp.text[:500]}")
+            return None
         return resp.json()["content"][0]["text"].strip()
     except Exception as e:
         print(f"  ❌ Claude API 调用失败: {e}")
