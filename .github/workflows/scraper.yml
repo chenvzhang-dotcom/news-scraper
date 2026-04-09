@@ -10,9 +10,17 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '运行模式 (news / jinsa / earnings / earnings-poll)'
+        description: '运行模式 (news / jinsa / earnings / earnings-poll / test-alert)'
         required: false
         default: 'news'
+      test_ticker:
+        description: 'test-alert 模式：股票代码（如 MU）'
+        required: false
+        default: 'MU'
+      test_date:
+        description: 'test-alert 模式：业绩日期（如 2026-03-18）'
+        required: false
+        default: '2026-03-18'
 
 permissions:
   contents: write
@@ -172,3 +180,26 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add earnings_schedule.json
           git diff --cached --quiet || (git commit -m "更新业绩轮询状态" && git push)
+
+  # ── 5. 测试业绩快报（手动触发）────────────────────────────────────────────
+  test-alert:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'test-alert'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v5
+
+      - name: 🐍 设置 Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 安装依赖
+        run: pip install -r requirements.txt yfinance
+
+      - name: 🧪 测试业绩快报推送
+        env:
+          FEISHU_WEBHOOK_EARNINGS:   ${{ secrets.FEISHU_WEBHOOK_EARNINGS }}
+          ANTHROPIC_API_KEY:         ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python scraper.py test-alert ${{ github.event.inputs.test_ticker }} ${{ github.event.inputs.test_date }}

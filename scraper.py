@@ -1785,6 +1785,54 @@ def main_earnings_alert():
     print("\n轮询完成\n")
 
 
+def main_test_alert(ticker: str, earnings_date: str):
+    """对指定 ticker 跑一次完整的业绩快报管道（测试用）"""
+    import yfinance as yf
+    print(f"\n{'='*50}")
+    print(f"测试业绩快报 · {ticker} · {earnings_date}")
+    print(f"{'='*50}")
+
+    # 1. 查 EPS
+    surprise = yf_check_earnings_released(ticker, earnings_date)
+    if not surprise:
+        print(f"  ❌ 未找到 {ticker} 在 {earnings_date} 的已发布业绩")
+        return
+    print(f"  ✅ EPS actual={surprise['actual_eps']} vs est={surprise['estimated_eps']} (surprise={surprise['surprise_pct']}%)")
+
+    # 2. 季度财务
+    financials = yf_get_quarterly_financials(ticker)
+    print(f"  ✅ 季度财务: revenue={financials.get('revenue') if financials else 'N/A'}")
+
+    # 3. Press release
+    press_release = sec_fetch_press_release(ticker, earnings_date) or "无数据"
+
+    # 4. 公司名
+    t = yf.Ticker(ticker)
+    company = t.info.get("shortName", ticker)
+    market = "美股"
+
+    # 5. Claude 生成
+    prompt = EARNINGS_SUMMARY_PROMPT.format(
+        company=company, ticker=ticker,
+        actual_eps=surprise["actual_eps"],
+        estimated_eps=surprise["estimated_eps"],
+        surprise_pct=surprise["surprise_pct"],
+        financials_json=json.dumps(financials, ensure_ascii=False, indent=2) if financials else "无数据",
+        consensus_json="无数据（测试模式，无提前快照）",
+        press_release=press_release,
+    )
+    print(f"\n  🤖 调用 Claude 生成业绩快报...")
+    summary = claude_generate(prompt)
+    if not summary:
+        print(f"  ❌ Claude 生成失败")
+        return
+    print(f"  ✅ 生成完成（{len(summary)} 字符）")
+
+    # 6. 推送飞书
+    card = build_earnings_alert_card(company, ticker, market, summary)
+    feishu_send(FEISHU_WEBHOOK_EARNINGS, card, f"测试·业绩快报·{ticker}")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 入口
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1798,5 +1846,10 @@ if __name__ == "__main__":
         main_earnings()
     elif mode in ("earnings-alert", "earnings-poll"):
         main_earnings_alert()
+    elif mode == "test-alert":
+        # python scraper.py test-alert MU 2026-03-18
+        ticker = sys.argv[2] if len(sys.argv) > 2 else "MU"
+        date = sys.argv[3] if len(sys.argv) > 3 else "2026-03-18"
+        main_test_alert(ticker, date)
     else:
         main()
