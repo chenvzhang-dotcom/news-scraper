@@ -114,7 +114,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-22T10:00:00Z",
     "market": "韩股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 48713479110000.0,
       "revenue_est_low": 37424000000000.0,
