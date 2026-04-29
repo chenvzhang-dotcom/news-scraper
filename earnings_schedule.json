@@ -6,7 +6,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-29T10:00:00Z",
     "market": "美股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 81391972180.0,
       "revenue_est_low": 80683000000.0,
@@ -24,7 +24,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-29T10:00:00Z",
     "market": "美股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 106961715260.0,
       "revenue_est_low": 103450000000.0,
@@ -42,7 +42,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-29T10:00:00Z",
     "market": "美股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 55540989940.0,
       "revenue_est_low": 53620280000.0,
@@ -60,7 +60,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-29T10:00:00Z",
     "market": "美股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 177089230530.0,
       "revenue_est_low": 172876000000.0,
@@ -96,7 +96,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-04-29T10:00:00Z",
     "market": "韩股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 155848121810000.0,
       "revenue_est_low": 141300000000000.0,
