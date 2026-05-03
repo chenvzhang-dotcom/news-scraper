@@ -124,5 +124,59 @@
       "eps_est_low": 34667.0,
       "eps_est_high": 42003.41
     }
+  },
+  "AMD_2026-05-05": {
+    "ticker": "AMD",
+    "company": "Advanced Micro Devices, Inc.",
+    "date": "2026-05-05",
+    "time_tag": "",
+    "poll_start_utc": "2026-05-05T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 9894224670.0,
+      "revenue_est_low": 9790000000.0,
+      "revenue_est_high": 10415700000.0,
+      "revenue_yoy_base": 7438000000.0,
+      "eps_est_avg": 1.28612,
+      "eps_est_low": 1.24546,
+      "eps_est_high": 1.44
+    }
+  },
+  "LITE_2026-05-05": {
+    "ticker": "LITE",
+    "company": "Lumentum Holdings Inc.",
+    "date": "2026-05-05",
+    "time_tag": "",
+    "poll_start_utc": "2026-05-05T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 810051900.0,
+      "revenue_est_low": 800000000.0,
+      "revenue_est_high": 831500000.0,
+      "revenue_yoy_base": 425200000.0,
+      "eps_est_avg": 2.26526,
+      "eps_est_low": 2.20102,
+      "eps_est_high": 2.36
+    }
+  },
+  "BABA_2026-05-13": {
+    "ticker": "BABA",
+    "company": "Alibaba Group Holding Limited",
+    "date": "2026-05-13",
+    "time_tag": "",
+    "poll_start_utc": "2026-05-13T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 247087842610.0,
+      "revenue_est_low": 236964869600.0,
+      "revenue_est_high": 255027000000.0,
+      "revenue_yoy_base": 236454000000.0,
+      "eps_est_avg": 5.95369,
+      "eps_est_low": 1.89,
+      "eps_est_high": 8.85
+    }
   }
 }
