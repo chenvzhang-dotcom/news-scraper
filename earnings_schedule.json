@@ -178,5 +178,41 @@
       "eps_est_low": 1.89,
       "eps_est_high": 8.85
     }
+  },
+  "NVDA_2026-05-20": {
+    "ticker": "NVDA",
+    "company": "NVIDIA Corporation",
+    "date": "2026-05-20",
+    "time_tag": "",
+    "poll_start_utc": "2026-05-20T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 79166840620.0,
+      "revenue_est_low": 77896000000.0,
+      "revenue_est_high": 85512000000.0,
+      "revenue_yoy_base": 44062000000.0,
+      "eps_est_avg": 1.78058,
+      "eps_est_low": 1.69,
+      "eps_est_high": 1.99
+    }
+  },
+  "1024.HK_2026-05-27": {
+    "ticker": "1024.HK",
+    "company": "快手",
+    "date": "2026-05-27",
+    "time_tag": "",
+    "poll_start_utc": "2026-05-27T10:00:00Z",
+    "market": "港股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 33431247440.0,
+      "revenue_est_low": 33400000000.0,
+      "revenue_est_high": 33500000000.0,
+      "revenue_yoy_base": 32608000000.0,
+      "eps_est_avg": 0.6917,
+      "eps_est_low": 0.67,
+      "eps_est_high": 0.71
+    }
   }
 }
