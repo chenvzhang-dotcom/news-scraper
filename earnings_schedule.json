@@ -214,5 +214,23 @@
       "eps_est_low": 0.67,
       "eps_est_high": 0.71
     }
+  },
+  "MU_2026-06-24": {
+    "ticker": "MU",
+    "company": "Micron Technology, Inc.",
+    "date": "2026-06-24",
+    "time_tag": "",
+    "poll_start_utc": "2026-06-24T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 35018404560.0,
+      "revenue_est_low": 19676000000.0,
+      "revenue_est_high": 42900000000.0,
+      "revenue_yoy_base": 9301000000.0,
+      "eps_est_avg": 20.05137,
+      "eps_est_low": 7.53,
+      "eps_est_high": 26.0
+    }
   }
 }
