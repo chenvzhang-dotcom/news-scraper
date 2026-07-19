@@ -232,5 +232,113 @@
       "eps_est_low": 7.53,
       "eps_est_high": 26.0
     }
+  },
+  "MSFT_2026-07-29": {
+    "ticker": "MSFT",
+    "company": "Microsoft Corporation",
+    "date": "2026-07-29",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-29T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 87672487440.0,
+      "revenue_est_low": 86900000000.0,
+      "revenue_est_high": 91239000000.0,
+      "revenue_yoy_base": 76441000000.0,
+      "eps_est_avg": 4.23972,
+      "eps_est_low": 4.07,
+      "eps_est_high": 4.89
+    }
+  },
+  "GOOG_2026-07-22": {
+    "ticker": "GOOG",
+    "company": "Alphabet Inc.",
+    "date": "2026-07-22",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-22T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 116907225680.0,
+      "revenue_est_low": 113623000000.0,
+      "revenue_est_high": 120126000000.0,
+      "revenue_yoy_base": 96428000000.0,
+      "eps_est_avg": 3.04273,
+      "eps_est_low": 2.6,
+      "eps_est_high": 8.38
+    }
+  },
+  "META_2026-07-29": {
+    "ticker": "META",
+    "company": "Meta Platforms, Inc.",
+    "date": "2026-07-29",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-29T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 60253188980.0,
+      "revenue_est_low": 59034000000.0,
+      "revenue_est_high": 62812000000.0,
+      "revenue_yoy_base": 47516000000.0,
+      "eps_est_avg": 7.23001,
+      "eps_est_low": 5.76,
+      "eps_est_high": 8.55
+    }
+  },
+  "AMZN_2026-07-30": {
+    "ticker": "AMZN",
+    "company": "Amazon.com, Inc.",
+    "date": "2026-07-30",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-30T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 195942041440.0,
+      "revenue_est_low": 186000000000.0,
+      "revenue_est_high": 200097700000.0,
+      "revenue_yoy_base": 167702000000.0,
+      "eps_est_avg": 1.81765,
+      "eps_est_low": 1.56,
+      "eps_est_high": 2.1
+    }
+  },
+  "005930.KS_2026-07-29": {
+    "ticker": "005930.KS",
+    "company": "三星电子",
+    "date": "2026-07-29",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-29T10:00:00Z",
+    "market": "韩股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 171110248280000.0,
+      "revenue_est_low": 170999009370000.0,
+      "revenue_est_high": 171400000000000.0,
+      "revenue_yoy_base": 74000000000000.0,
+      "eps_est_avg": 11032.471,
+      "eps_est_low": 10156.0,
+      "eps_est_high": 13124.68
+    }
+  },
+  "000660.KS_2026-07-28": {
+    "ticker": "000660.KS",
+    "company": "SK 海力士",
+    "date": "2026-07-28",
+    "time_tag": "",
+    "poll_start_utc": "2026-07-28T10:00:00Z",
+    "market": "韩股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 84121060050000.0,
+      "revenue_est_low": 76355566430000.0,
+      "revenue_est_high": 91739274000000.0,
+      "revenue_yoy_base": 22231952000000.0,
+      "eps_est_avg": 70975.38,
+      "eps_est_low": 61998.81,
+      "eps_est_high": 76447.0
+    }
   }
 }
