@@ -340,5 +340,59 @@
       "eps_est_low": 61998.81,
       "eps_est_high": 76447.0
     }
+  },
+  "AMD_2026-08-04": {
+    "ticker": "AMD",
+    "company": "Advanced Micro Devices, Inc.",
+    "date": "2026-08-04",
+    "time_tag": "",
+    "poll_start_utc": "2026-08-04T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 11305415290.0,
+      "revenue_est_low": 11096000000.0,
+      "revenue_est_high": 11640000000.0,
+      "revenue_yoy_base": 7685000000.0,
+      "eps_est_avg": 1.61045,
+      "eps_est_low": 1.48,
+      "eps_est_high": 1.74
+    }
+  },
+  "LITE_2026-08-11": {
+    "ticker": "LITE",
+    "company": "Lumentum Holdings Inc.",
+    "date": "2026-08-11",
+    "time_tag": "",
+    "poll_start_utc": "2026-08-11T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 987699020.0,
+      "revenue_est_low": 966800000.0,
+      "revenue_est_high": 1003400000.0,
+      "revenue_yoy_base": 480700000.0,
+      "eps_est_avg": 2.96892,
+      "eps_est_low": 2.87,
+      "eps_est_high": 3.07658
+    }
+  },
+  "SNDK_2026-08-05": {
+    "ticker": "SNDK",
+    "company": "Sandisk Corporation",
+    "date": "2026-08-05",
+    "time_tag": "",
+    "poll_start_utc": "2026-08-05T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 8394753330.0,
+      "revenue_est_low": 8004000000.0,
+      "revenue_est_high": 9078256590.0,
+      "revenue_yoy_base": 1901000000.0,
+      "eps_est_avg": 34.515,
+      "eps_est_low": 32.01,
+      "eps_est_high": 38.55
+    }
   }
 }
