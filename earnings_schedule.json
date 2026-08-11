@@ -366,7 +366,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-08-11T10:00:00Z",
     "market": "美股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 987699020.0,
       "revenue_est_low": 966800000.0,
