@@ -438,7 +438,7 @@
     "time_tag": "",
     "poll_start_utc": "2026-08-19T10:00:00Z",
     "market": "港股",
-    "earnings_status": "pending",
+    "earnings_status": "timeout",
     "consensus": {
       "revenue_est_avg": 35484316080.0,
       "revenue_est_low": 35096056000.0,
