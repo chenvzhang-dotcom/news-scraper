@@ -628,5 +628,59 @@
       "eps_est_low": 4.16699,
       "eps_est_high": 4.37
     }
+  },
+  "NVDA_2026-11-17": {
+    "ticker": "NVDA",
+    "company": "NVIDIA Corporation",
+    "date": "2026-11-17",
+    "time_tag": "",
+    "poll_start_utc": "2026-11-17T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 108731903900.0,
+      "revenue_est_low": 100481000000.0,
+      "revenue_est_high": 116251000000.0,
+      "revenue_yoy_base": 57006000000.0,
+      "eps_est_avg": 2.47121,
+      "eps_est_low": 2.25754,
+      "eps_est_high": 2.7
+    }
+  },
+  "BABA_2026-11-19": {
+    "ticker": "BABA",
+    "company": "Alibaba Group Holding Limited",
+    "date": "2026-11-19",
+    "time_tag": "",
+    "poll_start_utc": "2026-11-19T10:00:00Z",
+    "market": "美股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 269849229899.0,
+      "revenue_est_low": 265137000000.0,
+      "revenue_est_high": 275480000000.0,
+      "revenue_yoy_base": 247795000000.0,
+      "eps_est_avg": 11.02539,
+      "eps_est_low": 8.59,
+      "eps_est_high": 14.191
+    }
+  },
+  "1024.HK_2026-11-19": {
+    "ticker": "1024.HK",
+    "company": "快手",
+    "date": "2026-11-19",
+    "time_tag": "",
+    "poll_start_utc": "2026-11-19T10:00:00Z",
+    "market": "港股",
+    "earnings_status": "pending",
+    "consensus": {
+      "revenue_est_avg": 33154717930.0,
+      "revenue_est_low": 32894000000.0,
+      "revenue_est_high": 34316000000.0,
+      "revenue_yoy_base": 35554000000.0,
+      "eps_est_avg": 0.16824,
+      "eps_est_low": 0.15984,
+      "eps_est_high": 0.18
+    }
   }
 }
